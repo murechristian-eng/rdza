@@ -310,3 +310,15 @@ body {
   0%, 100% { opacity: 0.3; transform: scale(0.8); }
   50% { opacity: 1; transform: scale(1.2); }
 }
+
+/* ── Print / PDF Export ── */
+@media print {
+  body { background: white; color: black; font-size: 11pt; }
+  .topbar, .tab-bar, .footer, .chat-input-row, .btn { display: none !important; }
+  .content-area { max-width: 100%; padding: 0; margin: 0; }
+  .form-card { border: 1px solid #ccc; page-break-inside: avoid; }
+  #rdza-fiche { border: none; }
+  #rdza-fiche h2 { color: black; }
+  #rdza-fiche h3 { color: #333; }
+  .stat-pill { border: 1px solid #ccc; color: black; background: none; }
+}

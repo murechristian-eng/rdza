@@ -1,40 +1,114 @@
-export type ToolAvailability = 'available' | 'degraded' | 'unavailable'
+// ─────────────────────────────────────────
+// RDZA — Analyse architecturale & pré-faisabilité
+// ─────────────────────────────────────────
 
-export interface ToolStatus {
-  id: string
-  name: string
-  icon: string
-  category: 'runtime' | 'agent' | 'framework' | 'memory' | 'system'
-  availability: ToolAvailability
-  notes: string
-  fixSuggestion: string
+// Reponse de l'API RDZA Data (Vercel Function)
+export interface RDZAAPIResponse {
+  adresse: string
+  coordonnees: { lon: number; lat: number }
+  ville: string
+  codePostal: string
+  parcelle: string | null
+  surface: number | null
+  altitude: number | null
+  topographiePente: string | null
+  zonagePLU: string | null
+  orthophotoUrl: string | null
+  supData: SUPItem[] | null
+  note: string | null
+  noteReseaux: string | null
+  erreur?: string
 }
 
-export interface FeedbackEntry {
-  id: string
-  category: 'bug' | 'feature' | 'improvement' | 'question'
-  severity: 'critical' | 'high' | 'medium' | 'low'
-  title: string
+export interface SUPItem {
+  type: string
+  categorie: string
   description: string
-  steps: string
-  aiCategory?: string
-  aiPriority?: string
-  aiReformulation?: string
-  timestamp: number
 }
 
-export interface QAChecklistItem {
-  id: string
-  section: string
-  label: string
-  checked: boolean
-  comment: string
+export interface RDZAProject {
+  // Étape 1 : Saisie
+  adresseSite: string
+  intentionProjet: IntentionProjet
+
+  // Données automatisables (V1 : saisie manuelle)
+  parcelleCadastrale: string
+  surfaceTerrain: number | null
+  zonagePLU: ZonagePLU
+  topographiePente: TopographiePente
+
+  // Données visuelles et réglementaires (V2)
+  orthophotoUrl?: string
+
+  // Lecture architecturale
+  contexteUrbain: string
+  stationnementAccess: string
+
+  // Synthèse
+  syntheseArchitecte: string
 }
 
-export type AppView = 'tools' | 'feedback' | 'checklist' | 'ai'
+export type IntentionProjet =
+  | 'logement_collectif'
+  | 'maison_individuelle'
+  | 'tertiaire'
+  | 'mixte'
+  | 'equipement_public'
+  | 'industriel'
+  | 'renovation'
+  | 'autre'
+
+export type ZonagePLU =
+  | 'U'
+  | 'AU'
+  | 'A'
+  | 'N'
+  | 'UH'
+  | 'UC'
+  | 'UE'
+  | 'UZ'
+  | 'autre'
+
+export type TopographiePente =
+  | 'plat'
+  | 'leger'
+  | 'moyen'
+  | 'fort'
 
 export interface ChatMessage {
   role: 'user' | 'assistant'
   content: string
   timestamp: number
+}
+
+export type AppView = 'form' | 'summary' | 'ai'
+
+export const INTENTION_LABELS: Record<IntentionProjet, string> = {
+  logement_collectif: '🏢 Logement collectif',
+  maison_individuelle: '🏠 Maison individuelle',
+  tertiaire: '🏬 Tertiaire / Bureaux',
+  mixte: '🏗️ Mixte',
+  equipement_public: '🏫 Équipement public',
+  industriel: '🏭 Industriel',
+  renovation: '🔧 Rénovation',
+  autre: '📋 Autre',
+}
+
+export const ZONAGE_LABELS: Record<ZonagePLU, string> = {
+  U: 'U — Urbain',
+  AU: 'AU — À Urbaniser',
+  A: 'A — Agricole',
+  N: 'N — Naturel',
+  UH: 'UH — Urbain Habitat',
+  UC: 'UC — Urbain Centre',
+  UE: 'UE — Urbain Économique',
+  UZ: 'UZ — Urbain Zone',
+  autre: '📋 Autre',
+}
+
+export const TOPOGRAPHIE_LABELS: Record<TopographiePente, string> = {
+  plat: '🟢 Plat (< 3 %)',
+  leger: '🟡 Léger (3–8 %)',
+  moyen: '🟠 Moyen (8–15 %)',
+  fort: '🔴 Fort (> 15 %)',
 }
