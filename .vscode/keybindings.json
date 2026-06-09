@@ -1,0 +1,23 @@
+[
+  {
+    "key": "ctrl+k ctrl+l",
+    "command": "workbench.action.tasks.runTask",
+    "args": "🚀 Lancer Freebuff",
+    "when": "editorTextFocus"
+  },
+  {
+    "key": "ctrl+k ctrl+b",
+    "command": "workbench.action.tasks.runTask",
+    "args": "📦 Build Production"
+  },
+  {
+    "key": "ctrl+k ctrl+t",
+    "command": "workbench.action.tasks.runTask",
+    "args": "🔍 Typecheck"
+  },
+  {
+    "key": "ctrl+k ctrl+v",
+    "command": "workbench.action.tasks.runTask",
+    "args": "🖥️ Dev Server (Vite)"
+  }
+]

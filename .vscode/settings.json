@@ -1,0 +1,90 @@
+{
+  // ──────────────────────────────────────
+  // 🖥️  RDZA Test — VS Code Settings
+  // Optimisé pour React + TypeScript + Vite
+  // ──────────────────────────────────────
+
+  // ── Éditeur ──
+  "editor.tabSize": 2,
+  "editor.insertSpaces": true,
+  "editor.detectIndentation": false,
+  "editor.renderWhitespace": "boundary",
+  "editor.bracketPairColorization.enabled": true,
+  "editor.guides.bracketPairs": "active",
+  "editor.minimap.enabled": false,
+  "editor.smoothScrolling": true,
+  "editor.cursorBlinking": "smooth",
+  "editor.cursorSmoothCaretAnimation": "on",
+  "editor.fontFamily": "'Cascadia Code', 'Fira Code', 'JetBrains Mono', Consolas, monospace",
+  "editor.fontLigatures": true,
+  "window.zoomLevel": 0,
+  "editor.fontSize": 15,
+  "editor.lineHeight": 1.6,
+
+  // ── Fichiers ──
+  "files.exclude": {
+    "**/node_modules": true,
+    "**/.vercel": true,
+    "**/dist": false
+  },
+  "files.watcherExclude": {
+    "**/node_modules/**": true,
+    "**/.vercel/**": true
+  },
+  "files.autoSave": "afterDelay",
+  "files.autoSaveDelay": 1000,
+
+  // ── TypeScript ──
+  "typescript.tsdk": "node_modules/typescript/lib",
+  "typescript.enablePromptUseWorkspaceTsdk": true,
+  "typescript.preferences.importModuleSpecifier": "relative",
+  "typescript.updateImportsOnFileMove.enabled": "always",
+
+  // ── Formatage ──
+  "editor.formatOnSave": true,
+  "editor.defaultFormatter": "vscode.typescript-language-features",
+  "[typescript]": {
+    "editor.defaultFormatter": "vscode.typescript-language-features",
+    "editor.codeActionsOnSave": {
+      "source.organizeImports": "explicit"
+    }
+  },
+  "[typescriptreact]": {
+    "editor.defaultFormatter": "vscode.typescript-language-features",
+    "editor.codeActionsOnSave": {
+      "source.organizeImports": "explicit"
+    }
+  },
+  "[json]": {
+    "editor.defaultFormatter": "vscode.json-language-features"
+  },
+  "[css]": {
+    "editor.defaultFormatter": "vscode.css-language-features"
+  },
+
+  // ── Terminal ──
+  "terminal.integrated.defaultProfile.windows": "PowerShell",
+  "terminal.integrated.fontFamily": "'Cascadia Code', 'Fira Code', monospace",
+  "terminal.integrated.fontSize": 13,
+  "terminal.integrated.cursorBlinking": true,
+  "terminal.integrated.smoothScrolling": true,
+
+  // ── Emmet ──
+  "emmet.includeLanguages": {
+    "typescriptreact": "html"
+  },
+  "emmet.triggerExpansionOnTab": true,
+
+  // ── Couleurs des badges (rappel RDZA) ──
+  "workbench.colorCustomizations": {
+    "statusBar.background": "#1a1b26",
+    "statusBar.foreground": "#c0caf5",
+    "titleBar.activeBackground": "#24283b",
+    "titleBar.activeForeground": "#c0caf5",
+    "activityBar.background": "#1a1b26",
+    "activityBar.foreground": "#7aa2f7"
+  },
+
+  // ── Extensions recommandées ──
+  "extensions.ignoreRecommendations": false
+}
