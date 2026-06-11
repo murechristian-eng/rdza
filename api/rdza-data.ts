@@ -13,6 +13,7 @@ const APICARTO_GPU_SUP_S = 'https://apicarto.ign.fr/api/gpu/generateur-sup-s'
 const APICARTO_GPU_SUP_L = 'https://apicarto.ign.fr/api/gpu/generateur-sup-l'
 const APICARTO_GPU_SUP_P = 'https://apicarto.ign.fr/api/gpu/generateur-sup-p'
 const APICARTO_GPU_DOC = 'https://apicarto.ign.fr/api/gpu/doc-urba'
+
 // ─── Helper : fetch avec timeout ───
 async function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs = 5000): Promise<Response> {
   const controller = new AbortController()
@@ -130,6 +131,50 @@ async function elevation(lon: number, lat: number): Promise<ElevationResult> {
   }
 }
 
+// ─── Profil altimétrique (calcul de pente le long d'un tracé) ───
+async function elevationProfile(lonlats: { lon: number; lat: number }[]): Promise<ElevationProfileResult> {
+  try {
+    const lonStr = lonlats.map((p) => p.lon).join('|')
+    const latStr = lonlats.map((p) => p.lat).join('|')
+    const url = `${GEOPF_ALTI_LINE}?lon=${lonStr}&lat=${latStr}&resource=ign_rge_alti_wld&delimiter=|&indent=false`
+    const res = await fetchWithTimeout(url, { headers: { Accept: 'application/json' } })
+    if (!res.ok) return { points: [], penteMax: null, penteMoy: null, denivele: null }
+    const json = await res.json()
+    const elevations: Array<{ lon: number; lat: number; z: number; dist: number }> = json.elevations || []
+    const points: ElevationProfilePoint[] = elevations.map((e) => ({
+      lon: e.lon,
+      lat: e.lat,
+      z: e.z,
+      dist: e.dist || 0,
+    }))
+    let penteMax = 0
+    let penteMoy = 0
+    let denivele = 0
+    if (points.length > 1) {
+      for (let i = 1; i < points.length; i++) {
+        const dz = Math.abs(points[i].z - points[i - 1].z)
+        const dd = points[i].dist - points[i - 1].dist
+        if (dd > 0) {
+          const pente = (dz / dd) * 100
+          if (pente > penteMax) penteMax = pente
+        }
+      }
+      denivele = points[points.length - 1].z - points[0].z
+      if (points[points.length - 1].dist > 0) {
+        penteMoy = (Math.abs(denivele) / points[points.length - 1].dist) * 100
+      }
+    }
+    return {
+      points,
+      penteMax: penteMax > 0 ? Math.round(penteMax * 100) / 100 : null,
+      penteMoy: penteMoy > 0 ? Math.round(penteMoy * 100) / 100 : null,
+      denivele: Math.round(denivele * 100) / 100,
+    }
+  } catch {
+    return { points: [], penteMax: null, penteMoy: null, denivele: null }
+  }
+}
+
 // Convertit une géométrie GeoJSON en WKT (Well-Known Text)
 // requis par les APIs Apicarto (urbanisme, GPU/SUP)
 function geoJsonToWkt(geometry: unknown): string {
@@ -153,7 +198,7 @@ function geoJsonToWkt(geometry: unknown): string {
     }
     case 'MultiPolygon': {
       const polys = coords as unknown as number[][][][]
-      const polyStrs = polys.map(polyRings => '(' + polyRings.map(ringToWkt).join(', ') + ')')
+      const polyStrs = polys.map((polyRings) => '(' + polyRings.map(ringToWkt).join(', ') + ')')
       return `MULTIPOLYGON(${polyStrs.join(', ')})`
     }
     default:
@@ -233,11 +278,56 @@ async function sup(geometry: unknown): Promise<SUPItem[]> {
   return items
 }
 
+// ─── Recherche du document PLU via Apicarto GPU ───
+async function pluDocument(geometry: unknown, commune: string): Promise<PluDocumentResult> {
+  try {
+    const params = new URLSearchParams()
+    if (geometry) {
+      const geomStr = geoJsonToWkt(geometry)
+      params.append('geom', geomStr)
+    }
+    params.append('commune', commune)
+    const res = await fetch(`${APICARTO_GPU_DOC}?${params.toString()}`, {
+      headers: { Accept: 'application/json' },
+    })
+    if (!res.ok) return { url: null, type: null, dateApprobation: null, commune }
+    const json = await res.json()
+    const features = json.features || json || []
+    if (Array.isArray(features) && features.length > 0) {
+      const doc = features[0].properties || features[0] || {}
+      return {
+        url: doc.url || doc.lien || null,
+        type: doc.type || doc.nature || null,
+        dateApprobation: doc.dateapprobation || doc.date_approbation || null,
+        commune,
+      }
+    }
+    return { url: null, type: null, dateApprobation: null, commune }
+  } catch {
+    return { url: null, type: null, dateApprobation: null, commune }
+  }
+}
+
+// ─── Téléchargement et parsing du PDF PLU ───
+async function downloadAndParsePlu(url: string): Promise<string | null> {
+  try {
+    const res = await fetchWithTimeout(url, {}, 15000)
+    if (!res.ok) return null
+    const arrayBuffer = await res.arrayBuffer()
+    const buffer = Buffer.from(arrayBuffer)
+    const pdfParseModule = await import('pdf-parse'); const pdfParse = (pdfParseModule as any).default || pdfParseModule
+    const data = await pdfParse(buffer)
+    return data.text || null
+  } catch {
+    return null
+  }
+}
+
 export async function POST(req: Request): Promise<Response> {
   try {
     const body = await req.json()
     
-    // ─── Profil altimetrique (action separée) ───
+    // ─── Profil altimétrique (action séparée) ───
     if (body.action === 'elevationProfile' && body.lonlats) {
       const profile = await elevationProfile(body.lonlats)
       return Response.json(profile)
@@ -245,12 +335,7 @@ export async function POST(req: Request): Promise<Response> {
     
     const { adresse } = body
     if (!adresse?.trim()) {
-    let pluTexte: string | null = null
-    if (pluDocUrl) {
-      pluTexte = await downloadAndParsePlu(pluDocUrl)
-    }
-
-    return Response.json({ erreur: 'Adresse requise' }, { status: 400 })
+      return Response.json({ erreur: 'Adresse requise' }, { status: 400 })
     }
 
     // ─── Étape 1 : Géocodage (séquentiel, obligatoire) ───
@@ -263,12 +348,7 @@ export async function POST(req: Request): Promise<Response> {
       codePostal = geo.codePostal
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : 'Géocodage échoué'
-    let pluTexte: string | null = null
-    if (pluDocUrl) {
-      pluTexte = await downloadAndParsePlu(pluDocUrl)
-    }
-
-    return Response.json({ erreur: msg }, { status: 404 })
+      return Response.json({ erreur: msg }, { status: 404 })
     }
 
     // ─── Étape 2 : Appels parallèles (cadastre + altimétrie) ───
@@ -301,7 +381,7 @@ export async function POST(req: Request): Promise<Response> {
       pluDocType = pluDoc.type
       pluDocDate = pluDoc.dateApprobation
     } else {
-      // Fallback PLU Document sans geometrie
+      // Fallback PLU Document sans géométrie
       const pluDoc = await pluDocument(null, ville).catch(() => ({ url: null, type: null, dateApprobation: null, commune: ville }))
       pluDocUrl = pluDoc.url
       pluDocType = pluDoc.type
@@ -334,16 +414,12 @@ export async function POST(req: Request): Promise<Response> {
       supData: supData.length > 0 ? supData : null,
       pluDocumentUrl: pluDocUrl,
       pluDocumentType: pluDocType,
-      pluDocumentDate: pluDocDate
+      pluDocumentDate: pluDocDate,
+      pluTexte,
       noteReseaux: 'Les réseaux enterrés (gaz, électricité, eau, télécom) ne sont pas accessibles via API publique. Ils nécessitent une déclaration DT-DICT sur reseaux-et-canalisations.ineris.fr.',
       note: notes.length > 0 ? notes.join(' ') : null,
     })
   } catch {
-    let pluTexte: string | null = null
-    if (pluDocUrl) {
-      pluTexte = await downloadAndParsePlu(pluDocUrl)
-    }
-
     return Response.json({ erreur: 'Erreur serveur lors de la récupération des données.' }, { status: 500 })
   }
 }

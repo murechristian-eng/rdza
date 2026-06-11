@@ -7,7 +7,7 @@ const GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemi
 export async function POST(req: Request): Promise<Response> {
   try {
     const body = await req.json()
-    const { prompt, system, context, pluContext, pluDocumentUrl } = body
+    const { prompt, system, context, pluContext, pluDocumentUrl, pluTexte } = body
 
     if (!prompt) {
       return Response.json({ error: 'prompt requis' }, { status: 400 })
