@@ -16,7 +16,7 @@
       "maxDuration": 10
     },
     "api/urbanisme.ts": {
-      "maxDuration": 15
+      "maxDuration": 10
     }
   }
 }

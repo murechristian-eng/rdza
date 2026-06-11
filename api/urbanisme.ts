@@ -1,5 +1,5 @@
 // Vercel Serverless Function — Urbanisme (PLU + SUP + PLU Document)
-// Prend geometry WKT ou GeoJSON, retourne zonage PLU, servitudes, doc PLU
+// Optimisé : SUP en parallèle, timeouts 3s
 
 const APICARTO_URBANISME = 'https://apicarto.ign.fr/api/urbanisme/zone-urba'
 const APICARTO_GPU_SUP_S = 'https://apicarto.ign.fr/api/gpu/generateur-sup-s'
@@ -7,7 +7,7 @@ const APICARTO_GPU_SUP_L = 'https://apicarto.ign.fr/api/gpu/generateur-sup-l'
 const APICARTO_GPU_SUP_P = 'https://apicarto.ign.fr/api/gpu/generateur-sup-p'
 const APICARTO_GPU_DOC = 'https://apicarto.ign.fr/api/gpu/doc-urba'
 
-async function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs = 5000): Promise<Response> {
+async function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs = 3000): Promise<Response> {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeoutMs)
   try {
@@ -65,7 +65,7 @@ export async function POST(req: Request): Promise<Response> {
             method: 'POST',
             headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
             body,
-          }, 5000)
+          }, 3000)
           if (!res.ok) return null
           const json = await res.json()
           const features = json.features || []
@@ -86,36 +86,37 @@ export async function POST(req: Request): Promise<Response> {
           return null
         }
       })(),
-      // SUP
+      // SUP — 3 appels en parallèle au lieu de séquentiel
       (async () => {
         if (!geomStr) return []
-        const items: Array<{ type: string; categorie: string; description: string }> = []
         const endpoints = [APICARTO_GPU_SUP_S, APICARTO_GPU_SUP_L, APICARTO_GPU_SUP_P]
-        for (const endpoint of endpoints) {
-          try {
-            const body = new URLSearchParams({ geom: geomStr })
-            const res = await fetchWithTimeout(endpoint, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
-              body,
-            }, 5000)
-            if (!res.ok) continue
-            const json = await res.json()
-            const features = json.features || []
-            for (const feat of features) {
-              const props = feat.properties || {}
-              const nom = props.nom || props.libelle || props.type || ''
-              const categorie = props.categorie || props.famille || ''
-              const description = props.description || props.acte || props.reference || ''
-              if (nom || categorie || description) {
-                items.push({ type: nom, categorie, description })
-              }
+        const results = await Promise.all(
+          endpoints.map(async (endpoint) => {
+            try {
+              const body = new URLSearchParams({ geom: geomStr })
+              const res = await fetchWithTimeout(endpoint, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
+                body,
+              }, 3000)
+              if (!res.ok) return []
+              const json = await res.json()
+              const features = json.features || []
+              return features.map((feat: any) => {
+                const props = feat.properties || {}
+                const nom = props.nom || props.libelle || props.type || ''
+                const categorie = props.categorie || props.famille || ''
+                const description = props.description || props.acte || props.reference || ''
+                return nom || categorie || description
+                  ? { type: nom, categorie, description }
+                  : null
+              }).filter(Boolean)
+            } catch {
+              return []
             }
-          } catch {
-            // Silencieux
-          }
-        }
-        return items
+          })
+        )
+        return results.flat() as Array<{ type: string; categorie: string; description: string }>
       })(),
       // PLU Document
       (async () => {
@@ -126,7 +127,7 @@ export async function POST(req: Request): Promise<Response> {
           params.append('commune', commune)
           const res = await fetchWithTimeout(`${APICARTO_GPU_DOC}?${params.toString()}`, {
             headers: { Accept: 'application/json' },
-          }, 5000)
+          }, 3000)
           if (!res.ok) return { url: null, type: null, dateApprobation: null }
           const json = await res.json()
           const features = json.features || json || []
