@@ -42,6 +42,10 @@ export function RDZAForm({ project, onChange }: Props) {
   const [profileResult, setProfileResult] = useState<import('../types').ElevationProfileResult | null>(null)
   const [profileLoading, setProfileLoading] = useState(false)
 
+  // ─── Croquis d'emprise state ───
+  const [sketchMode, setSketchMode] = useState(false)
+  const [sketchResult, setSketchResult] = useState<{ area: number; ratio: number } | null>(null)
+
   // ─── Cleanup ───
   useEffect(() => {
     return () => {
@@ -79,6 +83,9 @@ export function RDZAForm({ project, onChange }: Props) {
     setCadastreGeometry(null)
     setCoordinates(null)
     setProfileResult(null)
+    setSketchResult(null)
+    setSketchMode(false)
+    setDrawMode(false)
 
     const timer = setTimeout(() => { setFetchMessage('') }, 8000)
     timerRef.current = timer
@@ -187,6 +194,7 @@ export function RDZAForm({ project, onChange }: Props) {
     setCadastreGeometry(null)
     setCoordinates(null)
     setProfileResult(null)
+    setSketchResult(null)
     onChange({
       ...project,
       adresseSite: value,
@@ -221,6 +229,8 @@ export function RDZAForm({ project, onChange }: Props) {
               orthoUrl={IGN_ORTHO}
               cadastreUrl={IGN_CADASTRE}
               drawMode={drawMode}
+              sketchMode={sketchMode}
+              surfaceTerrain={project.surfaceTerrain}
               onProfileComplete={async (lonlats: [number, number][]) => {
                 setProfileLoading(true)
                 setDrawMode(false)
@@ -237,6 +247,10 @@ export function RDZAForm({ project, onChange }: Props) {
                 } catch {}
                 setProfileLoading(false)
               }}
+              onSketchComplete={(area: number, ratio: number) => {
+                setSketchMode(false)
+                setSketchResult({ area, ratio })
+              }}
             />
             <div className="map-controls">
               <button className={`map-control-btn ${mapLayer === 'plan' ? 'active' : ''}`} onClick={() => setMapLayer('plan')}>
@@ -252,7 +266,8 @@ export function RDZAForm({ project, onChange }: Props) {
               )}
               <button
                 className={`map-control-btn ${drawMode ? 'active' : ''}`}
-                onClick={() => { setDrawMode(!drawMode); if (drawMode) setProfileResult(null) }}
+                onClick={() => { setDrawMode(!drawMode); if (drawMode) setProfileResult(null)
+    setSketchResult(null) }}
                 style={{ marginTop: '8px', borderTop: '1px solid var(--border-primary)', paddingTop: '8px' }}
               >
                 {drawMode ? '🔴 Stop' : '📐 Profil topo'}
@@ -425,10 +440,36 @@ interface LeafletMapProps {
   orthoUrl: string
   cadastreUrl: string
   drawMode: boolean
+  sketchMode: boolean
+  surfaceTerrain: number | null
   onProfileComplete: (lonlats: [number, number][]) => void
+  onSketchComplete: (area: number, ratio: number) => void
 }
 
-function LeafletMapDisplay({ coordinates, layer, geometry, planUrl, orthoUrl, cadastreUrl, drawMode, onProfileComplete }: LeafletMapProps) {
+// ─── Polygon area calculation (shoelace formula + lat→meters conversion) ───
+function computePolygonArea(latlngs: any[]): number {
+  if (latlngs.length < 3) return 0
+  const points = latlngs.map((ll: any) => [ll.lng, ll.lat] as [number, number])
+  
+  // Shoelace formula in degrees²
+  let areaDeg2 = 0
+  for (let i = 0; i < points.length; i++) {
+    const j = (i + 1) % points.length
+    areaDeg2 += points[i][0] * points[j][1]
+    areaDeg2 -= points[j][0] * points[i][1]
+  }
+  areaDeg2 = Math.abs(areaDeg2) / 2
+  
+  // Convert degrees² to m² using the latitude
+  const avgLat = points.reduce((s, p) => s + p[1], 0) / points.length
+  const latRad = avgLat * Math.PI / 180
+  const mPerDegLat = 111132.92 - 559.82 * Math.cos(2 * latRad) + 1.175 * Math.cos(4 * latRad) - 0.0023 * Math.cos(6 * latRad)
+  const mPerDegLon = 111412.84 * Math.cos(latRad) - 93.5 * Math.cos(3 * latRad) + 0.118 * Math.cos(5 * latRad)
+  
+  return areaDeg2 * mPerDegLat * mPerDegLon
+}
+
+function LeafletMapDisplay({ coordinates, layer, geometry, planUrl, orthoUrl, cadastreUrl, drawMode, sketchMode, surfaceTerrain, onProfileComplete, onSketchComplete }: LeafletMapProps) {
   const mapRef = useRef<HTMLDivElement>(null)
   const mapInstanceRef = useRef<any>(null)
   const tileRef = useRef<any>(null)
