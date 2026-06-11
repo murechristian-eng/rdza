@@ -6,6 +6,7 @@
 const GEOPF_GEOCODE = 'https://data.geopf.fr/geocodage/search'
 const APICARTO_CADASTRE = 'https://apicarto.ign.fr/api/cadastre/parcelle'
 const GEOPF_ALTI = 'https://data.geopf.fr/altimetrie/1.0/calcul/alti/rest/elevation.json'
+const GEOPF_ALTI_LINE = 'https://data.geopf.fr/altimetrie/1.0/calcul/alti/rest/elevationLine.json'
 const APICARTO_URBANISME = 'https://apicarto.ign.fr/api/urbanisme/zone-urba'
 const GEOPF_WMS = 'https://data.geopf.fr/wms-r/wms'
 const APICARTO_GPU_SUP_S = 'https://apicarto.ign.fr/api/gpu/generateur-sup-s'
@@ -35,6 +36,20 @@ interface PluDocumentResult {
 
 interface ElevationResult {
   altitude: number | null
+}
+
+interface ElevationProfilePoint {
+  lon: number
+  lat: number
+  z: number
+  dist: number
+}
+
+interface ElevationProfileResult {
+  points: ElevationProfilePoint[]
+  penteMax: number | null  // pourcentage
+  penteMoy: number | null
+  denivele: number | null
 }
 
 interface SUPItem {
@@ -199,7 +214,15 @@ async function sup(geometry: unknown): Promise<SUPItem[]> {
 
 export async function POST(req: Request): Promise<Response> {
   try {
-    const { adresse } = await req.json()
+    const body = await req.json()
+    
+    // ─── Profil altimetrique (action separée) ───
+    if (body.action === 'elevationProfile' && body.lonlats) {
+      const profile = await elevationProfile(body.lonlats)
+      return Response.json(profile)
+    }
+    
+    const { adresse } = body
     if (!adresse?.trim()) {
       return Response.json({ erreur: 'Adresse requise' }, { status: 400 })
     }

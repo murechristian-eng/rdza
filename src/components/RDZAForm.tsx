@@ -37,6 +37,11 @@ export function RDZAForm({ project, onChange }: Props) {
   // ─── Map layer toggles ───
   const [mapLayer, setMapLayer] = useState<'plan' | 'ortho' | 'cadastre'>('plan')
 
+  // ─── Elevation Profile state ───
+  const [drawMode, setDrawMode] = useState(false)
+  const [profileResult, setProfileResult] = useState<import('../types').ElevationProfileResult | null>(null)
+  const [profileLoading, setProfileLoading] = useState(false)
+
   // ─── Cleanup ───
   useEffect(() => {
     return () => {
@@ -73,6 +78,7 @@ export function RDZAForm({ project, onChange }: Props) {
     setSupList(null)
     setCadastreGeometry(null)
     setCoordinates(null)
+    setProfileResult(null)
 
     const timer = setTimeout(() => { setFetchMessage('') }, 8000)
     timerRef.current = timer
@@ -179,6 +185,7 @@ export function RDZAForm({ project, onChange }: Props) {
     setSupList(null)
     setCadastreGeometry(null)
     setCoordinates(null)
+    setProfileResult(null)
     onChange({
       ...project,
       adresseSite: value,
@@ -212,6 +219,23 @@ export function RDZAForm({ project, onChange }: Props) {
               planUrl={IGN_PLAN}
               orthoUrl={IGN_ORTHO}
               cadastreUrl={IGN_CADASTRE}
+              drawMode={drawMode}
+              onProfileComplete={async (lonlats: [number, number][]) => {
+                setProfileLoading(true)
+                setDrawMode(false)
+                try {
+                  const res = await fetch('/api/rdza-data', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ action: 'elevationProfile', lonlats }),
+                  })
+                  if (res.ok) {
+                    const data = await res.json()
+                    setProfileResult(data.points?.length > 0 ? data : null)
+                  }
+                } catch {}
+                setProfileLoading(false)
+              }}
             />
             <div className="map-controls">
               <button className={`map-control-btn ${mapLayer === 'plan' ? 'active' : ''}`} onClick={() => setMapLayer('plan')}>
@@ -225,6 +249,13 @@ export function RDZAForm({ project, onChange }: Props) {
                   🏛️ Cadastre
                 </button>
               )}
+              <button
+                className={`map-control-btn ${drawMode ? 'active' : ''}`}
+                onClick={() => { setDrawMode(!drawMode); if (drawMode) setProfileResult(null) }}
+                style={{ marginTop: '8px', borderTop: '1px solid var(--border-primary)', paddingTop: '8px' }}
+              >
+                {drawMode ? '🔴 Stop' : '📐 Profil topo'}
+              </button>
             </div>
           </>
         ) : (
@@ -392,9 +423,11 @@ interface LeafletMapProps {
   planUrl: string
   orthoUrl: string
   cadastreUrl: string
+  drawMode: boolean
+  onProfileComplete: (lonlats: [number, number][]) => void
 }
 
-function LeafletMapDisplay({ coordinates, layer, geometry, planUrl, orthoUrl, cadastreUrl }: LeafletMapProps) {
+function LeafletMapDisplay({ coordinates, layer, geometry, planUrl, orthoUrl, cadastreUrl, drawMode, onProfileComplete }: LeafletMapProps) {
   const mapRef = useRef<HTMLDivElement>(null)
   const mapInstanceRef = useRef<any>(null)
   const tileRef = useRef<any>(null)
@@ -453,4 +486,120 @@ function LeafletMapDisplay({ coordinates, layer, geometry, planUrl, orthoUrl, ca
   // Leaflet CSS imported statically above
 
   return <div ref={mapRef} style={{ width: '100%', height: '100%' }} />
+}
+
+
+/* ═══════════════════════════════════════════════
+   ElevationProfileChart — Canvas 2D profile
+   ═══════════════════════════════════════════════ */
+
+interface ElevationChartProps {
+  profile: import('../types').ElevationProfileResult
+  onClose: () => void
+}
+
+function ElevationProfileChart({ profile, onClose }: ElevationChartProps) {
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const { points, penteMax, penteMoy, denivele } = profile
+
+  useEffect(() => {
+    const canvas = canvasRef.current
+    if (!canvas || points.length < 2) return
+
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
+
+    const W = canvas.width
+    const H = canvas.height
+    const pad = { top: 20, right: 20, bottom: 30, left: 50 }
+    const pw = W - pad.left - pad.right
+    const ph = H - pad.top - pad.bottom
+
+    // Échelles
+    const zMin = Math.min(...points.map(p => p.z))
+    const zMax = Math.max(...points.map(p => p.z))
+    const zRange = zMax - zMin || 1
+    const dMax = points[points.length - 1].dist
+    const dRange = dMax || 1
+
+    const x = (dist: number) => pad.left + (dist / dRange) * pw
+    const y = (z: number) => pad.top + ph - ((z - zMin) / zRange) * ph
+
+    // Fond
+    ctx.fillStyle = '#0D1117'
+    ctx.fillRect(0, 0, W, H)
+
+    // Grille
+    ctx.strokeStyle = 'rgba(48,54,61,0.5)'
+    ctx.lineWidth = 0.5
+    for (let i = 0; i <= 5; i++) {
+      const gy = pad.top + (i / 5) * ph
+      ctx.beginPath(); ctx.moveTo(pad.left, gy); ctx.lineTo(W - pad.right, gy); ctx.stroke()
+    }
+
+    // Axes
+    ctx.strokeStyle = '#30363D'
+    ctx.lineWidth = 1
+    ctx.beginPath(); ctx.moveTo(pad.left, pad.top); ctx.lineTo(pad.left, H - pad.bottom); ctx.stroke()
+    ctx.beginPath(); ctx.moveTo(pad.left, H - pad.bottom); ctx.lineTo(W - pad.right, H - pad.bottom); ctx.stroke()
+
+    // Courbe de profil
+    ctx.strokeStyle = '#58A6FF'
+    ctx.lineWidth = 2
+    ctx.beginPath()
+    ctx.moveTo(x(points[0].dist), y(points[0].z))
+    for (let i = 1; i < points.length; i++) {
+      ctx.lineTo(x(points[i].dist), y(points[i].z))
+    }
+    ctx.stroke()
+
+    // Remplissage sous la courbe
+    ctx.fillStyle = 'rgba(88,166,255,0.08)'
+    ctx.beginPath()
+    ctx.moveTo(x(points[0].dist), H - pad.bottom)
+    for (let i = 0; i < points.length; i++) {
+      ctx.lineTo(x(points[i].dist), y(points[i].z))
+    }
+    ctx.lineTo(x(points[points.length - 1].dist), H - pad.bottom)
+    ctx.closePath()
+    ctx.fill()
+
+    // Labels axes
+    ctx.fillStyle = '#8B949E'
+    ctx.font = '10px Inter, sans-serif'
+    ctx.textAlign = 'center'
+    ctx.fillText(`${Math.round(dMax)} m`, pad.left + pw / 2, H - 5)
+    ctx.textAlign = 'right'
+    ctx.fillText(`${Math.round(zMin)} m`, pad.left - 5, H - pad.bottom)
+    ctx.fillText(`${Math.round(zMax)} m`, pad.left - 5, pad.top + 10)
+  }, [points])
+
+  return (
+    <div style={{
+      position: 'absolute',
+      bottom: 'var(--space-3)',
+      left: 'var(--space-3)',
+      right: 'var(--space-3)',
+      background: 'var(--bg-secondary)',
+      border: '1px solid var(--border-primary)',
+      borderRadius: 'var(--radius-lg)',
+      padding: 'var(--space-3)',
+      zIndex: 999,
+      boxShadow: 'var(--shadow-lg)',
+    }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-2)' }}>
+        <span style={{ fontWeight: 600, fontSize: 'var(--font-size-sm)', color: 'var(--fg-primary)' }}>
+          ⛰️ Profil altimétrique (IGN RGE ALTI)
+        </span>
+        <button className="btn btn-ghost btn-sm" onClick={onClose}>✕</button>
+      </div>
+      <canvas ref={canvasRef} width={600} height={200} style={{ width: '100%', height: 'auto', borderRadius: 'var(--radius-md)' }} />
+      <div style={{ display: 'flex', gap: 'var(--space-4)', marginTop: 'var(--space-2)', fontSize: 'var(--font-size-xs)', color: 'var(--fg-muted)' }}>
+        {denivele != null && <span>📏 Dénivelé : <strong style={{ color: 'var(--fg-secondary)' }}>{denivele > 0 ? '+' : ''}{denivele} m</strong></span>}
+        {penteMax != null && <span>🔴 Pente max : <strong style={{ color: 'var(--accent-alerte)' }}>{penteMax}%</strong></span>}
+        {penteMoy != null && <span>🟡 Pente moy : <strong style={{ color: 'var(--accent-ia)' }}>{penteMoy}%</strong></span>}
+        <span>📍 Profil : {Math.round(points[points.length - 1].dist)} m</span>
+      </div>
+    </div>
+  )
 }

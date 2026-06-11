@@ -30,6 +30,20 @@ export interface SUPItem {
   description: string
 }
 
+export interface ElevationProfilePoint {
+  lon: number
+  lat: number
+  z: number
+  dist: number
+}
+
+export interface ElevationProfileResult {
+  points: ElevationProfilePoint[]
+  penteMax: number | null
+  penteMoy: number | null
+  denivele: number | null
+}
+
 export interface RDZAProject {
   // Étape 1 : Saisie
   adresseSite: string
