@@ -64,6 +64,7 @@ export function RDZAForm({ project, onChange }: Props) {
   ].filter(Boolean).length + (project.surfaceTerrain != null ? 1 : 0)
 
   // ─── fetchData ───
+  // ─── fetchData (orchestré en 3 étapes) ───
   const fetchData = async () => {
     const adresse = project.adresseSite.trim()
     if (!adresse) return
@@ -75,7 +76,7 @@ export function RDZAForm({ project, onChange }: Props) {
     abortRef.current = controller
 
     setFetchStatus('loading')
-    setFetchMessage('Recherche...')
+    setFetchMessage('Géocodage...')
     setGeoInfo(null)
     setOrthophotoUrl(null)
     setSupCount(null)
@@ -87,88 +88,111 @@ export function RDZAForm({ project, onChange }: Props) {
     setSketchMode(false)
     setDrawMode(false)
 
-    const timer = setTimeout(() => { setFetchMessage('') }, 8000)
+    const timer = setTimeout(() => { setFetchMessage('') }, 15000)
     timerRef.current = timer
 
+    const updates: Partial<RDZAProject> = {}
+    const newAuto = new Set<string>()
+
     try {
-      const res = await fetch('/api/rdza-data', {
+      // ─── Étape 1 : Géocodage ───
+      const geoRes = await fetch('/api/geocode', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ adresse }),
         signal: controller.signal,
       })
-
       if (abortRef.current !== controller) return
-
-      if (!res.ok) {
+      if (!geoRes.ok) {
         setFetchStatus('error')
-        if (res.status === 404) {
-          setFetchMessage('Adresse introuvable. Verifiez votre saisie.')
-        } else if (res.status === 504) {
-          setFetchMessage('Le serveur a mis trop de temps. Reessayez dans quelques secondes.')
+        if (geoRes.status === 404) {
+          setFetchMessage('Adresse introuvable. Vérifiez votre saisie.')
         } else {
-          setFetchMessage('Erreur lors de la récupération des données.')
+          setFetchMessage('Erreur lors du géocodage.')
         }
         return
       }
-
-      const data: RDZAAPIResponse = await res.json()
+      const geo = await geoRes.json()
       if (abortRef.current !== controller) return
-
-      const updates: Partial<RDZAProject> = {}
-      const newAuto = new Set<string>()
-
-      if (data.ville) {
-        setGeoInfo({ ville: data.ville, codePostal: data.codePostal, altitude: data.altitude ?? 0 })
-        setCoordinates([data.coordonnees.lon, data.coordonnees.lat])
+      if (geo.erreur) {
+        setFetchStatus('error')
+        setFetchMessage('Adresse introuvable. Vérifiez votre saisie.')
+        return
       }
 
-      if (data.parcelle) {
-        updates.parcelleCadastrale = data.parcelle
-        newAuto.add('parcelleCadastrale')
-      }
-      if (data.surface != null) {
-        updates.surfaceTerrain = data.surface
-        newAuto.add('surfaceTerrain')
-      }
-      if (data.geometry) {
-        setCadastreGeometry(data.geometry)
+      const { lon, lat, ville, codePostal } = geo
+      setGeoInfo({ ville, codePostal, altitude: 0 })
+      setCoordinates([lon, lat])
+      setFetchMessage('Cadastre & altimétrie...')
+      // Orthophoto URL (construite côté client)
+      const delta = 0.001
+      const bbox = [lat - delta, lon - delta, lat + delta, lon + delta].join(',')
+      const orthoUrl = `https://data.geopf.fr/wms-r/wms?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=ORTHOIMAGERY.ORTHOPHOTOS&BBOX=${bbox}&WIDTH=400&HEIGHT=300&CRS=EPSG:4326&FORMAT=image/jpeg&STYLES=`
+      setOrthophotoUrl(orthoUrl)
+      updates.orthophotoUrl = orthoUrl
+
+      // ─── Étape 2 : Cadastre + Altimétrie ───
+      const cadRes = await fetch('/api/cadastre-alti', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ lon, lat }),
+        signal: controller.signal,
+      })
+      if (abortRef.current !== controller) return
+      if (cadRes.ok) {
+        const cad = await cadRes.json()
+        if (abortRef.current !== controller) return
+        if (cad.parcelle) {
+          updates.parcelleCadastrale = cad.parcelle
+          newAuto.add('parcelleCadastrale')
+        }
+        if (cad.surface != null) {
+          updates.surfaceTerrain = cad.surface
+          newAuto.add('surfaceTerrain')
+        }
+        if (cad.geometry) {
+          setCadastreGeometry(cad.geometry)
+        }
+        if (cad.altitude != null) {
+          setGeoInfo(prev => prev ? { ...prev, altitude: cad.altitude } : { ville, codePostal, altitude: cad.altitude })
+        }
+        onChange({ ...project, ...updates })
+        setAutoFilled(newAuto)
+
+        // ─── Étape 3 : Urbanisme (PLU + SUP + Doc PLU) ───
+        if (cad.geometry) {
+          setFetchMessage('Urbanisme...')
+          const urbRes = await fetch('/api/urbanisme', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ geometry: cad.geometry, commune: ville }),
+            signal: controller.signal,
+          })
+          if (abortRef.current !== controller) return
+          if (urbRes.ok) {
+            const urb = await urbRes.json()
+            if (abortRef.current !== controller) return
+            if (urb.zonagePLU && (Object.keys(ZONAGE_LABELS) as string[]).includes(urb.zonagePLU)) {
+              updates.zonagePLU = urb.zonagePLU as RDZAProject['zonagePLU']
+              newAuto.add('zonagePLU')
+            }
+            if (urb.supData && urb.supData.length > 0) {
+              setSupCount(urb.supData.length)
+              setSupList(urb.supData)
+            }
+            if (urb.pluDocumentUrl) {
+              updates.pluDocumentUrl = urb.pluDocumentUrl
+              updates.pluDocumentType = urb.pluDocumentType || undefined
+            }
+            onChange({ ...project, ...updates })
+            setAutoFilled(newAuto)
+          }
+        }
       }
 
-      if (data.zonagePLU && (Object.keys(ZONAGE_LABELS) as string[]).includes(data.zonagePLU)) {
-        updates.zonagePLU = data.zonagePLU as RDZAProject['zonagePLU']
-        newAuto.add('zonagePLU')
-      }
-
-      if (data.orthophotoUrl) {
-        setOrthophotoUrl(data.orthophotoUrl)
-        updates.orthophotoUrl = data.orthophotoUrl
-      }
-
-      if (data.supData && data.supData.length > 0) {
-        setSupCount(data.supData.length)
-        setSupList(data.supData)
-      }
-
-      // PLU Document context for AI
-      if (data.pluDocumentUrl) {
-        updates.pluDocumentUrl = data.pluDocumentUrl
-        updates.pluDocumentType = data.pluDocumentType || undefined
-      }
-      // pluTexte est telecharge a la demande par api/ai.ts
-
-      if (data.altitude != null && geoInfo) {
-        setGeoInfo(prev => prev ? { ...prev, altitude: data.altitude! } : null)
-      } else if (data.altitude != null && data.ville) {
-        setGeoInfo({ ville: data.ville, codePostal: data.codePostal, altitude: data.altitude })
-      }
-
-      onChange({ ...project, ...updates })
-      setAutoFilled(newAuto)
-
-      const hasParcelle = !!data.parcelle
-      const hasSurface = data.surface != null
-      const hasPLU = !!data.zonagePLU
+      const hasParcelle = !!updates.parcelleCadastrale
+      const hasSurface = updates.surfaceTerrain != null
+      const hasPLU = !!updates.zonagePLU
       const allOk = hasParcelle && hasSurface && hasPLU
       const anyOk = hasParcelle || hasSurface || hasPLU
 
@@ -188,6 +212,7 @@ export function RDZAForm({ project, onChange }: Props) {
       setFetchMessage('Erreur réseau — vérifiez votre connexion.')
     }
   }
+
 
   // ─── handleAdresseChange ───
   const handleAdresseChange = (value: string) => {

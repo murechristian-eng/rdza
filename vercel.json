@@ -9,11 +9,14 @@
     }
   ],
   "functions": {
-    "api/ai.ts": {
-      "maxDuration": 30
+    "api/geocode.ts": {
+      "maxDuration": 10
     },
-    "api/rdza-data.ts": {
-      "maxDuration": 30
+    "api/cadastre-alti.ts": {
+      "maxDuration": 10
+    },
+    "api/urbanisme.ts": {
+      "maxDuration": 10
     }
   }
 }
