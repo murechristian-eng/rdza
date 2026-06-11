@@ -15,6 +15,8 @@ const emptyProject: RDZAProject = {
   stationnementAccess: '',
   syntheseArchitecte: '',
   orthophotoUrl: undefined,
+    pluDocumentUrl: undefined,
+    pluDocumentType: undefined,
 }
 
 export default function App() {

@@ -52,6 +52,11 @@ function parseStructuredResponse(text: string): ParsedResponse | null {
 }
 
 export function AIAssistant({ project }: Props) {
+  const pluInfo = project.pluDocumentUrl 
+    ? `
+• Document PLU : ${project.pluDocumentType || 'PLU'} (${project.pluDocumentUrl})`
+    : ''
+
   const projectContext = `Projet RDZA en cours :
 • Adresse : ${project.adresseSite || 'Non renseignée'}
 • Intention : ${INTENTION_LABELS[project.intentionProjet]}
@@ -99,6 +104,7 @@ Je peux vous aider à :
           prompt,
           system: SYSTEM_PROMPT,
           context: projectContext,
+          pluContext: pluInfo.trim() || undefined,
         }),
       })
       if (!res.ok) throw new Error(`API error: ${res.status}`)

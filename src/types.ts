@@ -16,6 +16,9 @@ export interface RDZAAPIResponse {
   orthophotoUrl: string | null
   supData: SUPItem[] | null
   geometry: unknown | null
+  pluDocumentUrl: string | null
+  pluDocumentType: string | null
+  pluDocumentDate: string | null
   note: string | null
   noteReseaux: string | null
   erreur?: string
@@ -40,6 +43,10 @@ export interface RDZAProject {
 
   // Données visuelles et réglementaires (V2)
   orthophotoUrl?: string
+
+  // Document PLU (V3.5)
+  pluDocumentUrl?: string
+  pluDocumentType?: string
 
   // Lecture architecturale
   contexteUrbain: string

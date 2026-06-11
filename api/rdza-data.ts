@@ -11,6 +11,7 @@ const GEOPF_WMS = 'https://data.geopf.fr/wms-r/wms'
 const APICARTO_GPU_SUP_S = 'https://apicarto.ign.fr/api/gpu/generateur-sup-s'
 const APICARTO_GPU_SUP_L = 'https://apicarto.ign.fr/api/gpu/generateur-sup-l'
 const APICARTO_GPU_SUP_P = 'https://apicarto.ign.fr/api/gpu/generateur-sup-p'
+const APICARTO_GPU_DOC = 'https://apicarto.ign.fr/api/gpu/doc-urba'
 
 interface GeocodeResult {
   lon: number
@@ -23,6 +24,13 @@ interface CadastreResult {
   parcelle: string | null
   surface: number | null
   geometry: unknown | null
+}
+
+interface PluDocumentResult {
+  url: string | null
+  type: string | null
+  dateApprobation: string | null
+  commune: string
 }
 
 interface ElevationResult {

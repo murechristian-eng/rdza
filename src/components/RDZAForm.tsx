@@ -131,6 +131,12 @@ export function RDZAForm({ project, onChange }: Props) {
         setSupList(data.supData)
       }
 
+      // PLU Document context for AI
+      if (data.pluDocumentUrl) {
+        updates.pluDocumentUrl = data.pluDocumentUrl
+        updates.pluDocumentType = data.pluDocumentType || undefined
+      }
+
       if (data.altitude != null && geoInfo) {
         setGeoInfo(prev => prev ? { ...prev, altitude: data.altitude! } : null)
       } else if (data.altitude != null && data.ville) {
@@ -180,6 +186,8 @@ export function RDZAForm({ project, onChange }: Props) {
       surfaceTerrain: null,
       zonagePLU: 'autre',
       orthophotoUrl: undefined,
+      pluDocumentUrl: undefined,
+      pluDocumentType: undefined,
     })
     setAutoFilled(new Set())
   }
