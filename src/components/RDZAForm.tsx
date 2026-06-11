@@ -104,6 +104,8 @@ export function RDZAForm({ project, onChange }: Props) {
         setFetchStatus('error')
         if (res.status === 404) {
           setFetchMessage('Adresse introuvable. Verifiez votre saisie.')
+        } else if (res.status === 504) {
+          setFetchMessage('Le serveur a mis trop de temps. Reessayez dans quelques secondes.')
         } else {
           setFetchMessage('Erreur lors de la récupération des données.')
         }
