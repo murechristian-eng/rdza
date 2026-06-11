@@ -16,7 +16,7 @@ const emptyProject: RDZAProject = {
   syntheseArchitecte: '',
   orthophotoUrl: undefined,
     pluDocumentUrl: undefined,
-    pluDocumentType: undefined,
+    pluDocumentType: undefined
 }
 
 export default function App() {

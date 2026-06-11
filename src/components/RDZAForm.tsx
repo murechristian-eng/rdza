@@ -142,6 +142,7 @@ export function RDZAForm({ project, onChange }: Props) {
         updates.pluDocumentUrl = data.pluDocumentUrl
         updates.pluDocumentType = data.pluDocumentType || undefined
       }
+      // pluTexte est telecharge a la demande par api/ai.ts
 
       if (data.altitude != null && geoInfo) {
         setGeoInfo(prev => prev ? { ...prev, altitude: data.altitude! } : null)

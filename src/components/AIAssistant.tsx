@@ -105,6 +105,7 @@ Je peux vous aider à :
           system: SYSTEM_PROMPT,
           context: projectContext,
           pluContext: pluInfo.trim() || undefined,
+          pluDocumentUrl: project.pluDocumentUrl || undefined,
         }),
       })
       if (!res.ok) throw new Error(`API error: ${res.status}`)

@@ -245,7 +245,12 @@ export async function POST(req: Request): Promise<Response> {
     
     const { adresse } = body
     if (!adresse?.trim()) {
-      return Response.json({ erreur: 'Adresse requise' }, { status: 400 })
+    let pluTexte: string | null = null
+    if (pluDocUrl) {
+      pluTexte = await downloadAndParsePlu(pluDocUrl)
+    }
+
+    return Response.json({ erreur: 'Adresse requise' }, { status: 400 })
     }
 
     // ─── Étape 1 : Géocodage (séquentiel, obligatoire) ───
@@ -258,7 +263,12 @@ export async function POST(req: Request): Promise<Response> {
       codePostal = geo.codePostal
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : 'Géocodage échoué'
-      return Response.json({ erreur: msg }, { status: 404 })
+    let pluTexte: string | null = null
+    if (pluDocUrl) {
+      pluTexte = await downloadAndParsePlu(pluDocUrl)
+    }
+
+    return Response.json({ erreur: msg }, { status: 404 })
     }
 
     // ─── Étape 2 : Appels parallèles (cadastre + altimétrie) ───
@@ -305,6 +315,11 @@ export async function POST(req: Request): Promise<Response> {
     if (zonagePLU == null && cad.geometry) notes.push('Zonage PLU non disponible.')
     if (supData.length === 0 && cad.geometry) notes.push('Aucune servitude SUP trouvée.')
 
+    let pluTexte: string | null = null
+    if (pluDocUrl) {
+      pluTexte = await downloadAndParsePlu(pluDocUrl)
+    }
+
     return Response.json({
       adresse: adresse.trim(),
       coordonnees: { lon, lat },
@@ -319,11 +334,16 @@ export async function POST(req: Request): Promise<Response> {
       supData: supData.length > 0 ? supData : null,
       pluDocumentUrl: pluDocUrl,
       pluDocumentType: pluDocType,
-      pluDocumentDate: pluDocDate,
+      pluDocumentDate: pluDocDate
       noteReseaux: 'Les réseaux enterrés (gaz, électricité, eau, télécom) ne sont pas accessibles via API publique. Ils nécessitent une déclaration DT-DICT sur reseaux-et-canalisations.ineris.fr.',
       note: notes.length > 0 ? notes.join(' ') : null,
     })
   } catch {
+    let pluTexte: string | null = null
+    if (pluDocUrl) {
+      pluTexte = await downloadAndParsePlu(pluDocUrl)
+    }
+
     return Response.json({ erreur: 'Erreur serveur lors de la récupération des données.' }, { status: 500 })
   }
 }
