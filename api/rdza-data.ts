@@ -15,7 +15,7 @@ const APICARTO_GPU_SUP_P = 'https://apicarto.ign.fr/api/gpu/generateur-sup-p'
 const APICARTO_GPU_DOC = 'https://apicarto.ign.fr/api/gpu/doc-urba'
 
 // ─── Helper : fetch avec timeout ───
-async function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs = 5000): Promise<Response> {
+async function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs = 3000): Promise<Response> {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeoutMs)
   try {
@@ -75,7 +75,7 @@ interface SUPItem {
 
 async function geocode(adresse: string): Promise<GeocodeResult> {
   const url = `${GEOPF_GEOCODE}?q=${encodeURIComponent(adresse)}&limit=1`
-  const res = await fetchWithTimeout(url, { headers: { Accept: 'application/json' } }, 8000)
+  const res = await fetchWithTimeout(url, { headers: { Accept: 'application/json' } }, 3000)
   if (!res.ok) throw new Error('Géocodage échoué')
   const json = await res.json()
   const features = json.features || []
@@ -94,7 +94,7 @@ async function geocode(adresse: string): Promise<GeocodeResult> {
 async function cadastre(lon: number, lat: number): Promise<CadastreResult> {
   try {
     const url = `${APICARTO_CADASTRE}?lon=${lon}&lat=${lat}&distance=50&srid=4326`
-    const res = await fetchWithTimeout(url, { headers: { Accept: 'application/json' } }, 8000)
+    const res = await fetchWithTimeout(url, { headers: { Accept: 'application/json' } }, 3000)
     if (!res.ok) return { parcelle: null, surface: null, geometry: null }
     const json = await res.json()
     const features = json.features || []
@@ -301,21 +301,6 @@ async function pluDocument(geometry: unknown, commune: string): Promise<PluDocum
   }
 }
 
-// ─── Téléchargement et parsing du PDF PLU ───
-async function downloadAndParsePlu(url: string): Promise<string | null> {
-  try {
-    const res = await fetchWithTimeout(url, {}, 15000)
-    if (!res.ok) return null
-    const arrayBuffer = await res.arrayBuffer()
-    const buffer = Buffer.from(arrayBuffer)
-    const pdfParseModule = await import('pdf-parse'); const pdfParse = (pdfParseModule as any).default || pdfParseModule
-    const data = await pdfParse(buffer)
-    return data.text || null
-  } catch {
-    return null
-  }
-}
-
 export async function POST(req: Request): Promise<Response> {
   try {
     const body = await req.json()
@@ -388,10 +373,6 @@ export async function POST(req: Request): Promise<Response> {
     if (zonagePLU == null && cad.geometry) notes.push('Zonage PLU non disponible.')
     if (supData.length === 0 && cad.geometry) notes.push('Aucune servitude SUP trouvée.')
 
-    let pluTexte: string | null = null
-    if (pluDocUrl) {
-      pluTexte = await downloadAndParsePlu(pluDocUrl)
-    }
 
     return Response.json({
       adresse: adresse.trim(),
@@ -408,7 +389,7 @@ export async function POST(req: Request): Promise<Response> {
       pluDocumentUrl: pluDocUrl,
       pluDocumentType: pluDocType,
       pluDocumentDate: pluDocDate,
-      pluTexte,
+      pluTexte: null,
       noteReseaux: 'Les réseaux enterrés (gaz, électricité, eau, télécom) ne sont pas accessibles via API publique. Ils nécessitent une déclaration DT-DICT sur reseaux-et-canalisations.ineris.fr.',
       note: notes.length > 0 ? notes.join(' ') : null,
     })
