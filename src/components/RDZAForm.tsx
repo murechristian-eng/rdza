@@ -1,29 +1,51 @@
 import { useState, useRef, useEffect } from 'react'
-import type { RDZAProject, IntentionProjet, ZonagePLU, TopographiePente, RDZAAPIResponse } from '../types'
+import 'leaflet/dist/leaflet.css'
+import type { RDZAProject, RDZAAPIResponse, SUPItem } from '../types'
 import { INTENTION_LABELS, ZONAGE_LABELS, TOPOGRAPHIE_LABELS } from '../types'
+
+/* ═══════════════════════════════════════════════
+   RDZAForm V3 — Canvas-First avec carte Leaflet
+   ═══════════════════════════════════════════════ */
 
 interface Props {
   project: RDZAProject
-  onChange: (p: RDZAProject) => void
+  onChange: (project: RDZAProject) => void
 }
 
 type FetchStatus = 'idle' | 'loading' | 'full' | 'partial' | 'error'
 
+// ─── IGN WMTS Layers (gratuits, sans clé) ───
+const IGN_PLAN = 'https://data.geopf.fr/wmts?SERVICE=WMTS&VERSION=1.0.0&REQUEST=GetTile&LAYER=GEOGRAPHICALGRIDSYSTEMS.PLANIGNV2&STYLE=normal&FORMAT=image/png&TILEMATRIXSET=PM&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}'
+const IGN_ORTHO = 'https://data.geopf.fr/wmts?SERVICE=WMTS&VERSION=1.0.0&REQUEST=GetTile&LAYER=ORTHOIMAGERY.ORTHOPHOTOS&STYLE=normal&FORMAT=image/jpeg&TILEMATRIXSET=PM&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}'
+const IGN_CADASTRE = 'https://data.geopf.fr/wmts?SERVICE=WMTS&VERSION=1.0.0&REQUEST=GetTile&LAYER=CADASTRALPARCELS.PARCELLAIRE_EXPRESS&STYLE=bdparcellaire_o&FORMAT=image/png&TILEMATRIXSET=PM&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}'
+
 export function RDZAForm({ project, onChange }: Props) {
+  // ─── API State ───
   const [fetchStatus, setFetchStatus] = useState<FetchStatus>('idle')
-  const [fetchMessage, setFetchMessage] = useState<string | null>(null)
+  const [fetchMessage, setFetchMessage] = useState('')
   const [autoFilled, setAutoFilled] = useState<Set<string>>(new Set())
-  const [geoInfo, setGeoInfo] = useState<{ ville: string; codePostal: string; altitude: number | null } | null>(null)
+  const [geoInfo, setGeoInfo] = useState<{ ville: string; codePostal: string; altitude: number } | null>(null)
   const [orthophotoUrl, setOrthophotoUrl] = useState<string | null>(null)
   const [supCount, setSupCount] = useState<number | null>(null)
-  const [supList, setSupList] = useState<{ type: string; categorie: string; description: string }[] | null>(null)
+  const [supList, setSupList] = useState<SUPItem[] | null>(null)
+  const [cadastreGeometry, setCadastreGeometry] = useState<unknown | null>(null)
+  const [coordinates, setCoordinates] = useState<[number, number] | null>(null)
+
   const abortRef = useRef<AbortController | null>(null)
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  const set = <K extends keyof RDZAProject>(key: K, value: RDZAProject[K]) => {
-    onChange({ ...project, [key]: value })
-  }
+  // ─── Map layer toggles ───
+  const [mapLayer, setMapLayer] = useState<'plan' | 'ortho' | 'cadastre'>('plan')
 
+  // ─── Cleanup ───
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) clearTimeout(timerRef.current)
+      if (abortRef.current) abortRef.current.abort()
+    }
+  }, [])
+
+  // ─── filledCount ───
   const filledCount = [
     project.syntheseArchitecte,
     project.adresseSite,
@@ -32,355 +54,395 @@ export function RDZAForm({ project, onChange }: Props) {
     project.stationnementAccess,
   ].filter(Boolean).length + (project.surfaceTerrain != null ? 1 : 0)
 
+  // ─── fetchData ───
   const fetchData = async () => {
-    if (!project.adresseSite.trim()) {
-      setFetchStatus('error')
-      setFetchMessage('Saisissez une adresse avant de lancer la recherche.')
-      return
-    }
+    const adresse = project.adresseSite.trim()
+    if (!adresse) return
+
     if (abortRef.current) abortRef.current.abort()
-    if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null }
+    if (timerRef.current) clearTimeout(timerRef.current)
+
     const controller = new AbortController()
     abortRef.current = controller
 
     setFetchStatus('loading')
-    setFetchMessage(null)
+    setFetchMessage('Recherche...')
     setGeoInfo(null)
     setOrthophotoUrl(null)
     setSupCount(null)
+    setSupList(null)
+    setCadastreGeometry(null)
+    setCoordinates(null)
+
+    const timer = setTimeout(() => { setFetchMessage('') }, 8000)
+    timerRef.current = timer
+
     try {
       const res = await fetch('/api/rdza-data', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ adresse: project.adresseSite.trim() }),
+        body: JSON.stringify({ adresse }),
         signal: controller.signal,
       })
-      if (controller.signal.aborted) return
-      const data: RDZAAPIResponse = await res.json()
+
       if (abortRef.current !== controller) return
-      if (!res.ok || data.erreur) {
+
+      if (!res.ok) {
         setFetchStatus('error')
-        setFetchMessage(data.erreur || 'Erreur lors de la récupération des données.')
+        setFetchMessage('Erreur lors de la récupération des données.')
         return
       }
-      const filled = new Set<string>()
+
+      const data: RDZAAPIResponse = await res.json()
+      if (abortRef.current !== controller) return
+
       const updates: Partial<RDZAProject> = {}
+      const newAuto = new Set<string>()
+
+      if (data.ville) {
+        setGeoInfo({ ville: data.ville, codePostal: data.codePostal, altitude: data.altitude ?? 0 })
+        setCoordinates([data.coordonnees.lon, data.coordonnees.lat])
+      }
+
       if (data.parcelle) {
         updates.parcelleCadastrale = data.parcelle
-        filled.add('parcelleCadastrale')
+        newAuto.add('parcelleCadastrale')
       }
       if (data.surface != null) {
         updates.surfaceTerrain = data.surface
-        filled.add('surfaceTerrain')
+        newAuto.add('surfaceTerrain')
       }
-      if (data.altitude != null) {
-        filled.add('altitude')
+      if (data.geometry) {
+        setCadastreGeometry(data.geometry)
       }
+
       if (data.zonagePLU && (Object.keys(ZONAGE_LABELS) as string[]).includes(data.zonagePLU)) {
-        updates.zonagePLU = data.zonagePLU as ZonagePLU
-        filled.add('zonagePLU')
+        updates.zonagePLU = data.zonagePLU as RDZAProject['zonagePLU']
+        newAuto.add('zonagePLU')
       }
+
       if (data.orthophotoUrl) {
+        setOrthophotoUrl(data.orthophotoUrl)
         updates.orthophotoUrl = data.orthophotoUrl
       }
-      onChange({ ...project, ...updates })
-      setAutoFilled(filled)
-      setGeoInfo({
-        ville: data.ville || '',
-        codePostal: data.codePostal || '',
-        altitude: data.altitude,
-      })
-      setOrthophotoUrl(data.orthophotoUrl)
-      setSupCount(data.supData?.length ?? null)
-      setSupList(data.supData?.length ? data.supData : null)
-      if (filled.size === 0) {
-        setFetchStatus('partial')
-        setFetchMessage('Géocodage réussi, mais aucune donnée cadastrale ou PLU trouvée pour cette adresse.')
-      } else if (filled.size < 2) {
-        setFetchStatus('partial')
-        setFetchMessage('Données partiellement récupérées. Complétez les champs manquants.')
-      } else {
-        setFetchStatus('full')
-        setFetchMessage('Données récupérées avec succès !')
+
+      if (data.supData && data.supData.length > 0) {
+        setSupCount(data.supData.length)
+        setSupList(data.supData)
       }
-      timerRef.current = setTimeout(() => { setFetchMessage(null); timerRef.current = null }, 8000)
+
+      if (data.altitude != null && geoInfo) {
+        setGeoInfo(prev => prev ? { ...prev, altitude: data.altitude! } : null)
+      } else if (data.altitude != null && data.ville) {
+        setGeoInfo({ ville: data.ville, codePostal: data.codePostal, altitude: data.altitude })
+      }
+
+      onChange({ ...project, ...updates })
+      setAutoFilled(newAuto)
+
+      const hasParcelle = !!data.parcelle
+      const hasSurface = data.surface != null
+      const hasPLU = !!data.zonagePLU
+      const allOk = hasParcelle && hasSurface && hasPLU
+      const anyOk = hasParcelle || hasSurface || hasPLU
+
+      if (allOk) {
+        setFetchStatus('full')
+        setFetchMessage('Données publiques récupérées avec succès')
+      } else if (anyOk) {
+        setFetchStatus('partial')
+        setFetchMessage('Données partiellement récupérées')
+      } else {
+        setFetchStatus('error')
+        setFetchMessage('Aucune donnée trouvée pour cette adresse.')
+      }
     } catch (e: unknown) {
       if (e instanceof DOMException && e.name === 'AbortError') return
       setFetchStatus('error')
-      setFetchMessage('Impossible de contacter le service. Vérifiez votre connexion.')
+      setFetchMessage('Erreur réseau — vérifiez votre connexion.')
     }
   }
 
+  // ─── handleAdresseChange ───
   const handleAdresseChange = (value: string) => {
-    if (value !== project.adresseSite) {
-      setFetchStatus('idle')
-      setFetchMessage(null)
-      setAutoFilled(new Set())
-      setGeoInfo(null)
-      setOrthophotoUrl(null)
-      setSupCount(null)
-      onChange({
-        ...project,
-        adresseSite: value,
-        parcelleCadastrale: '',
-        surfaceTerrain: null,
-        zonagePLU: 'U',
-      })
-      return
-    }
-    set('adresseSite', value)
+    setFetchStatus('idle')
+    setFetchMessage('')
+    setGeoInfo(null)
+    setOrthophotoUrl(null)
+    setSupCount(null)
+    setSupList(null)
+    setCadastreGeometry(null)
+    setCoordinates(null)
+    onChange({
+      ...project,
+      adresseSite: value,
+      parcelleCadastrale: '',
+      surfaceTerrain: null,
+      zonagePLU: 'autre',
+      orthophotoUrl: undefined,
+    })
+    setAutoFilled(new Set())
   }
 
   const isAuto = (field: string) => autoFilled.has(field)
+  const updateField = <K extends keyof RDZAProject>(key: K, value: RDZAProject[K]) => {
+    onChange({ ...project, [key]: value })
+  }
 
-  useEffect(() => {
-    return () => {
-      if (timerRef.current) clearTimeout(timerRef.current)
-      if (abortRef.current) abortRef.current.abort()
-    }
-  }, [])
+  const fetchDisabled = fetchStatus === 'loading' || !project.adresseSite.trim()
 
   return (
-    <div>
-      <div className="stats-row" style={{ marginBottom: 20 }}>
-        <div className="stat-pill available">
-          {filledCount}/6 champs textuels remplis
-        </div>
-        <div className="stat-pill degraded">
-          Méthode RDZA
-        </div>
-        {fetchStatus !== 'idle' && (
-          <div className={`stat-pill ${
-            fetchStatus === 'error' ? 'error' : fetchStatus === 'partial' ? 'warning' : 'healthy'
-          }`}>
-            {fetchStatus === 'loading' && 'Recherche en cours...'}
-            {fetchStatus === 'full' && 'Données récupérées'}
-            {fetchStatus === 'partial' && 'Partiellement rempli'}
-            {fetchStatus === 'error' && 'Erreur'}
-          </div>
-        )}
-        {geoInfo && (
-          <div className="stat-pill available">
-            📍 {geoInfo.ville} {geoInfo.codePostal}
-          </div>
-        )}
-        {supCount != null && supCount > 0 && (
-          <div className="stat-pill warning">
-            ⚠️ {supCount} servitude{supCount > 1 ? 's' : ''} SUP
-          </div>
-        )}
-      </div>
-
-      {supList && supList.length > 0 && (
-        <div className="form-card" style={{ marginBottom: 16, padding: 12 }}>
-          <h3 style={{ fontSize: 'var(--font-size-base)', marginBottom: 8 }}>⚠️ Servitudes d&apos;Utilité Publique (SUP)</h3>
-          <ul style={{ margin: 0, paddingLeft: 20, fontSize: 'var(--font-size-sm)' }}>
-            {supList.map((s, i) => (
-              <li key={i} style={{ marginBottom: 4 }}>
-                <strong>{s.type || s.categorie}</strong>
-                {s.description ? `: ${s.description}` : ''}
-              </li>
-            ))}
-          </ul>
-          <small className="form-hint" style={{ marginTop: 8, display: 'block' }}>
-            📡 Source : IGN API Carto GPU — Ces servitudes impactent la constructibilité.
-          </small>
-        </div>
-      )}
-
-      {fetchMessage && (
-        <div className={`fetch-banner ${fetchStatus}`}>
-          {fetchMessage}
-        </div>
-      )}
-
-      <div className="form-card">
-        <h2 className="section-title">1. Identification du site</h2>
-        <div className="form-row">
-          <div className="form-group" style={{ flex: 2 }}>
-            <label className="form-label">Adresse du site *</label>
-            <div className="input-with-button">
-              <input
-                className="form-input"
-                type="text"
-                value={project.adresseSite}
-                onChange={e => handleAdresseChange(e.target.value)}
-                placeholder="Ex: 12 rue de Rivoli, 75001 Paris"
-              />
-              <button
-                className={`btn btn-sm fetch-btn ${fetchStatus === 'loading' ? 'loading' : ''}`}
-                onClick={fetchData}
-                disabled={fetchStatus === 'loading' || !project.adresseSite.trim()}
-                title="Récupérer les données publiques (cadastre, PLU, orthophoto, SUP) à partir de l'adresse"
-              >
-                {fetchStatus === 'loading' ? 'Recherche...' : 'Récupérer'}
+    <div className="canvas-shell">
+      {/* COLONNE 1 — CARTE */}
+      <div className="canvas-map">
+        {coordinates ? (
+          <>
+            <LeafletMapDisplay
+              coordinates={coordinates}
+              layer={mapLayer}
+              geometry={cadastreGeometry}
+              planUrl={IGN_PLAN}
+              orthoUrl={IGN_ORTHO}
+              cadastreUrl={IGN_CADASTRE}
+            />
+            <div className="map-controls">
+              <button className={`map-control-btn ${mapLayer === 'plan' ? 'active' : ''}`} onClick={() => setMapLayer('plan')}>
+                🗺️ Plan IGN
               </button>
+              <button className={`map-control-btn ${mapLayer === 'ortho' ? 'active' : ''}`} onClick={() => setMapLayer('ortho')}>
+                🛰️ Orthophoto
+              </button>
+              {cadastreGeometry != null && (
+                <button className={`map-control-btn ${mapLayer === 'cadastre' ? 'active' : ''}`} onClick={() => setMapLayer('cadastre')}>
+                  🏛️ Cadastre
+                </button>
+              )}
             </div>
+          </>
+        ) : (
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--fg-muted)', fontSize: 'var(--font-size-sm)', flexDirection: 'column', gap: 'var(--space-3)' }}>
+            <span style={{ fontSize: '2.5rem', opacity: 0.3 }}>🗺️</span>
+            <span>Saisissez une adresse et cliquez sur <strong>Recuperer</strong></span>
+            <span style={{ fontSize: 'var(--font-size-xs)', opacity: 0.5 }}>pour afficher la carte interactive IGN</span>
           </div>
-          <div className="form-group" style={{ flex: 1 }}>
-            <label className="form-label">Intention de projet</label>
-            <select
-              className="form-select"
-              value={project.intentionProjet}
-              onChange={e => set('intentionProjet', e.target.value as IntentionProjet)}
-            >
-              {(Object.keys(INTENTION_LABELS) as IntentionProjet[]).map(k => (
-                <option key={k} value={k}>{INTENTION_LABELS[k]}</option>
-              ))}
-            </select>
-          </div>
+        )}
+      </div>
+
+      {/* COLONNE 2 — PANNEAU */}
+      <div className="canvas-sidebar">
+        {/* Stats Row */}
+        <div className="stats-row">
+          <span className="stat-item">
+            <span className={`stat-badge ${filledCount === 6 ? 'success' : filledCount >= 3 ? 'warning' : 'info'}`}>
+              {filledCount}/6
+            </span>
+            <span style={{ color: 'var(--fg-muted)', fontSize: 'var(--font-size-xs)' }}>champs</span>
+          </span>
+          <span className="stat-badge info">RDZA</span>
+          {fetchStatus === 'loading' && <span className="stat-badge warning">⏳ Recherche...</span>}
+          {fetchStatus === 'full' && <span className="stat-badge success">OK</span>}
+          {fetchStatus === 'partial' && <span className="stat-badge warning">Partiel</span>}
+          {fetchStatus === 'error' && <span className="stat-badge error">Erreur</span>}
+          {geoInfo && (
+            <span className="stat-badge info">
+              📍 {geoInfo.ville} {geoInfo.codePostal}
+              {geoInfo.altitude ? ' · ⛰️ ' + Math.round(geoInfo.altitude) + 'm' : ''}
+            </span>
+          )}
+          {supCount != null && (
+            <span className="stat-badge error">⚠️ {supCount} servitude{supCount > 1 ? 's' : ''}</span>
+          )}
         </div>
 
-        <h2 className="section-title">2. Données cadastrales et géographiques</h2>
-        <div className="form-row">
-          <div className="form-group">
-            <label className="form-label">
-              {isAuto('parcelleCadastrale') && <span className="auto-badge">🛰️ API</span>}
-              Parcelle cadastrale
-            </label>
-            <input
-              className={`form-input ${isAuto('parcelleCadastrale') ? 'auto-filled' : ''}`}
-              type="text"
-              value={project.parcelleCadastrale}
-              onChange={e => set('parcelleCadastrale', e.target.value)}
-              placeholder="Ex: 000 AB 123"
-            />
-          </div>
-          <div className="form-group">
-            <label className="form-label">
-              {isAuto('surfaceTerrain') && <span className="auto-badge">🛰️ API</span>}
-              Surface terrain (m²)
-            </label>
-            <input
-              className={`form-input ${isAuto('surfaceTerrain') ? 'auto-filled' : ''}`}
-              type="number"
-              value={project.surfaceTerrain ?? ''}
-              onChange={e => set('surfaceTerrain', e.target.value ? Number(e.target.value) : null)}
-              placeholder="Ex: 850"
-            />
-          </div>
-          <div className="form-group">
-            <label className="form-label">
-              {isAuto('zonagePLU') && <span className="auto-badge">🛰️ API</span>}
-              Zonage PLU
-            </label>
-            <select
-              className={`form-select ${isAuto('zonagePLU') ? 'auto-filled' : ''}`}
-              value={project.zonagePLU}
-              onChange={e => set('zonagePLU', e.target.value as ZonagePLU)}
-            >
-              {(Object.keys(ZONAGE_LABELS) as ZonagePLU[]).map(k => (
-                <option key={k} value={k}>{ZONAGE_LABELS[k]}</option>
-              ))}
-            </select>
-          </div>
-          <div className="form-group">
-            <label className="form-label">Topographie / Pente</label>
-            <select
-              className="form-select"
-              value={project.topographiePente}
-              onChange={e => set('topographiePente', e.target.value as TopographiePente)}
-            >
-              {(Object.keys(TOPOGRAPHIE_LABELS) as TopographiePente[]).map(k => (
-                <option key={k} value={k}>{TOPOGRAPHIE_LABELS[k]}</option>
-              ))}
-            </select>
-            {isAuto('altitude') && geoInfo?.altitude != null && (
-              <small className="form-hint">
-                ⛰️ Altitude : {Math.round(geoInfo.altitude)} m (IGN RGE ALTI)
-              </small>
-            )}
-            {!isAuto('altitude') && (
-              <small className="form-hint">
-                La pente sera calculée automatiquement en V3 via le profil altimétrique IGN.
-              </small>
-            )}
-          </div>
-        </div>
-
-        {/* Orthophoto IGN */}
-        {orthophotoUrl && (
-          <div className="orthophoto-section" style={{ marginTop: 16, marginBottom: 8 }}>
-            <label className="form-label">
-              <span className="auto-badge">🛰️ API</span>
-              Orthophoto IGN
-            </label>
-            <img
-              src={orthophotoUrl}
-              alt="Orthophoto IGN du site"
-              className="orthophoto-img"
-              onError={(e) => {
-                const target = e.currentTarget as HTMLElement
-                target.style.display = 'none'
-                const fallback = target.nextElementSibling as HTMLElement | null
-                if (fallback) fallback.style.display = 'block'
-              }}
-              style={{
-                width: '100%',
-                maxHeight: 300,
-                objectFit: 'cover',
-                borderRadius: 8,
-                border: '1px solid var(--border-color)',
-              }}
-            />
-            <div style={{ display: 'none', padding: '20px', textAlign: 'center', color: 'var(--fg-muted)', fontSize: 'var(--font-size-sm)' }}>
-              📡 Orthophoto IGN non disponible pour cette zone.
-            </div>
-            <small className="form-hint" style={{ marginTop: 4 }}>
-              📡 Orthophotographie aérienne IGN — Géoportail WMS
-            </small>
+        {/* SUP List */}
+        {supList && supList.length > 0 && (
+          <div className="sup-list">
+            {supList.map((s, i) => (
+              <div key={i} className="sup-item">
+                <strong>{s.type || s.categorie}</strong>
+                {s.description && <span> — {s.description}</span>}
+              </div>
+            ))}
           </div>
         )}
 
-        <h2 className="section-title">3. Lecture architecturale</h2>
-        <div className="form-row">
-          <div className="form-group" style={{ flex: 1 }}>
-            <label className="form-label">Contexte urbain et typologies</label>
-            <textarea
-              className="form-textarea"
-              value={project.contexteUrbain}
-              onChange={e => set('contexteUrbain', e.target.value)}
-              placeholder="Décrivez le tissu urbain environnant, les gabarits, les typologies bâties, les alignements..."
-              rows={3}
-            />
+        {/* Fetch Banner */}
+        {fetchMessage && (
+          <div className={`fetch-banner ${fetchStatus === 'full' ? 'success' : fetchStatus === 'partial' ? 'partial' : fetchStatus === 'error' ? 'error' : 'loading'}`}>
+            {fetchMessage}
           </div>
-          <div className="form-group" style={{ flex: 1 }}>
-            <label className="form-label">Stationnement et accessibilité</label>
-            <textarea
-              className="form-textarea"
-              value={project.stationnementAccess}
-              onChange={e => set('stationnementAccess', e.target.value)}
-              placeholder="Stationnement existant, accès véhicules, transports en commun, dessertes..."
-              rows={3}
-            />
+        )}
+
+        {/* SECTION 1 : Identification */}
+        <div className="tool-card">
+          <div className="tool-card-header">
+            <span className="section-icon">📍</span> Identification du site
+          </div>
+          <div className="form-grid">
+            <div className="form-group">
+              <label>Adresse</label>
+              <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
+                <input type="text" value={project.adresseSite} onChange={(e) => handleAdresseChange(e.target.value)} placeholder="12 rue de Rivoli, 75001 Paris" style={{ flex: 1 }} />
+                <button className={`btn btn-fetch ${fetchStatus === 'loading' ? 'loading' : ''}`} onClick={fetchData} disabled={fetchDisabled}>
+                  {fetchStatus === 'loading' ? '⏳' : '🛰️'} Recuperer
+                </button>
+              </div>
+            </div>
+            <div className="form-group">
+              <label>Intention de projet</label>
+              <select value={project.intentionProjet} onChange={(e) => updateField('intentionProjet', e.target.value as RDZAProject['intentionProjet'])}>
+                {Object.entries(INTENTION_LABELS).map(([k, v]) => (<option key={k} value={k}>{v}</option>))}
+              </select>
+            </div>
           </div>
         </div>
 
-        <h2 className="section-title">4. Synthèse architecte</h2>
-        <div className="form-group">
-          <label className="form-label">
-            Synthèse et interprétation RDZA
-            <span className="field-counter">{project.syntheseArchitecte ? '✓ Rempli' : 'En attente'}</span>
-          </label>
-          <textarea
-            className="form-textarea"
-            value={project.syntheseArchitecte}
-            onChange={e => set('syntheseArchitecte', e.target.value)}
-            placeholder="Votre lecture globale du site : potentiel, contraintes, premières orientations programme, points de vigilance..."
-            rows={4}
-            style={{ minHeight: 120, fontSize: 'var(--font-size-base)' }}
-          />
+        {/* SECTION 2 : Cadastre & Geo */}
+        <div className="tool-card">
+          <div className="tool-card-header">
+            <span className="section-icon">🏛️</span> Cadastre & Géographie
+          </div>
+          <div className="form-grid">
+            <div className="form-group">
+              <label>Parcelle cadastrale {isAuto('parcelleCadastrale') && <span className="api-badge">🛰️ API</span>}</label>
+              <input type="text" value={project.parcelleCadastrale} onChange={(e) => { updateField('parcelleCadastrale', e.target.value); setAutoFilled(prev => { const s = new Set(prev); s.delete('parcelleCadastrale'); return s }) }} placeholder="000 AB 123" />
+            </div>
+            <div className="form-group">
+              <label>Surface terrain (m²) {isAuto('surfaceTerrain') && <span className="api-badge">🛰️ API</span>}</label>
+              <input type="number" value={project.surfaceTerrain ?? ''} onChange={(e) => { updateField('surfaceTerrain', e.target.value ? Number(e.target.value) : null); setAutoFilled(prev => { const s = new Set(prev); s.delete('surfaceTerrain'); return s }) }} placeholder="850" />
+            </div>
+            <div className="form-group">
+              <label>Zonage PLU {isAuto('zonagePLU') && <span className="api-badge">🛰️ API</span>}</label>
+              <select value={project.zonagePLU} onChange={(e) => { updateField('zonagePLU', e.target.value as RDZAProject['zonagePLU']); setAutoFilled(prev => { const s = new Set(prev); s.delete('zonagePLU'); return s }) }}>
+                {Object.entries(ZONAGE_LABELS).map(([k, v]) => (<option key={k} value={k}>{v}</option>))}
+              </select>
+            </div>
+            <div className="form-group">
+              <label>Topographie / Pente</label>
+              <select value={project.topographiePente} onChange={(e) => updateField('topographiePente', e.target.value as RDZAProject['topographiePente'])}>
+                {Object.entries(TOPOGRAPHIE_LABELS).map(([k, v]) => (<option key={k} value={k}>{v}</option>))}
+              </select>
+            </div>
+          </div>
+          {geoInfo?.altitude != null && (
+            <div style={{ marginTop: 'var(--space-3)', fontSize: 'var(--font-size-sm)', color: 'var(--accent-altitude)', display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
+              ⛰️ Altitude : <strong>{Math.round(geoInfo.altitude)} m</strong> (IGN RGE ALTI)
+            </div>
+          )}
         </div>
-      </div>
 
-      <div className="info-banner">
-        <strong>🛰️ Méthode RDZA</strong> — Les données sont récupérées automatiquement
-        via les API publiques françaises (data.geopf.fr, apicarto.ign.fr) :
-        géocodage, cadastre, urbanisme (PLU), altimétrie, orthophoto IGN et servitudes SUP.
-        <br />
-        <small>⚠️ Les réseaux enterrés (gaz, électricité, eau, télécom) ne sont pas accessibles via API publique.
-        Une déclaration DT-DICT est obligatoire sur reseaux-et-canalisations.ineris.fr.</small>
+        {/* Orthophoto preview */}
+        {orthophotoUrl && (
+          <div className="ortho-preview">
+            <img src={orthophotoUrl} alt="Orthophoto IGN" onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none' }} />
+          </div>
+        )}
+
+        {/* SECTION 3 : Lecture architecturale */}
+        <div className="tool-card">
+          <div className="tool-card-header">
+            <span className="section-icon">🏗️</span> Lecture architecturale
+          </div>
+          <div className="form-group full-width">
+            <label>Contexte urbain et typologies</label>
+            <textarea value={project.contexteUrbain} onChange={(e) => updateField('contexteUrbain', e.target.value)} placeholder="Décrivez le tissu urbain environnant : hauteurs dominantes, typologies de bâti, matériaux, implantation par rapport à la rue..." rows={4} />
+          </div>
+          <div className="form-group full-width" style={{ marginTop: 'var(--space-3)' }}>
+            <label>Stationnement et accessibilité</label>
+            <textarea value={project.stationnementAccess} onChange={(e) => updateField('stationnementAccess', e.target.value)} placeholder="Accès véhicules, transports en commun, stationnement existant, contraintes de desserte..." rows={4} />
+          </div>
+        </div>
+
+        {/* SECTION 4 : Synthese */}
+        <div className="tool-card">
+          <div className="tool-card-header">
+            <span className="section-icon">✍️</span> Synthèse architecte
+          </div>
+          <div className="form-group full-width">
+            <textarea value={project.syntheseArchitecte} onChange={(e) => updateField('syntheseArchitecte', e.target.value)} placeholder="Votre synthese : coherence urbaine, qualite d'insertion, potentiel cache, strategie de projet recommandee..." rows={5} style={{ fontSize: 'var(--font-size-base)' }} />
+          </div>
+        </div>
+
+        {/* Info Banner */}
+        <div className="info-banner">
+          <strong>🛰️ Sources :</strong> IGN Geoportail (géocodage, altimétrie RGE ALTI, orthophotos, plan cadastral) · IGN Apicarto (cadastre, urbanisme/PLU, servitudes SUP). Données publiques gratuites.<br />
+          <strong>⚠️ DT-DICT obligatoire :</strong> avant tous travaux, déclarez-vous sur <em>protocole-dt-dict.fr</em>. L'API réseaux enterrés n'est pas accessible au public.
+        </div>
       </div>
     </div>
   )
+}
+
+/* ═══════════════════════════════════════════════
+   LeafletMapDisplay — Carte IGN interactive
+   ═══════════════════════════════════════════════ */
+
+interface LeafletMapProps {
+  coordinates: [number, number]
+  layer: 'plan' | 'ortho' | 'cadastre'
+  geometry: unknown | null
+  planUrl: string
+  orthoUrl: string
+  cadastreUrl: string
+}
+
+function LeafletMapDisplay({ coordinates, layer, geometry, planUrl, orthoUrl, cadastreUrl }: LeafletMapProps) {
+  const mapRef = useRef<HTMLDivElement>(null)
+  const mapInstanceRef = useRef<any>(null)
+  const tileRef = useRef<any>(null)
+  const geoRef = useRef<any>(null)
+  const [L, setL] = useState<any>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    import('leaflet').then(mod => {
+      if (!cancelled) setL(mod.default ?? mod)
+    }).catch(() => { console.warn('Leaflet not available') })
+    return () => { cancelled = true }
+  }, [])
+
+  useEffect(() => {
+    if (!L || !mapRef.current || mapInstanceRef.current) return
+    const map = L.map(mapRef.current, {
+      center: [coordinates[1], coordinates[0]],
+      zoom: 18,
+      zoomControl: true,
+      attributionControl: false,
+    })
+    mapInstanceRef.current = map
+    return () => { map.remove(); mapInstanceRef.current = null }
+  }, [L])
+
+  useEffect(() => {
+    if (!L || !mapInstanceRef.current) return
+    const map = mapInstanceRef.current
+    if (tileRef.current) map.removeLayer(tileRef.current)
+    const url = layer === 'plan' ? planUrl : layer === 'ortho' ? orthoUrl : cadastreUrl
+    const tile = L.tileLayer(url, { maxZoom: 21, attribution: 'IGN — Geoportail' })
+    tile.addTo(map)
+    tileRef.current = tile
+  }, [L, layer, planUrl, orthoUrl, cadastreUrl])
+
+  useEffect(() => {
+    if (!mapInstanceRef.current) return
+    mapInstanceRef.current.setView([coordinates[1], coordinates[0]], 18, { animate: true })
+  }, [coordinates])
+
+  useEffect(() => {
+    if (!L || !mapInstanceRef.current || !geometry) return
+    const map = mapInstanceRef.current
+    if (geoRef.current) map.removeLayer(geoRef.current)
+    try {
+      const geo = L.geoJSON(geometry, {
+        style: { color: '#58A6FF', weight: 3, opacity: 0.9, fillColor: '#58A6FF', fillOpacity: 0.15 },
+      })
+      geo.addTo(map)
+      geoRef.current = geo
+      try { const b = geo.getBounds(); if (b.isValid()) map.fitBounds(b, { padding: [40, 40], maxZoom: 19 }) } catch {}
+    } catch { console.warn('Could not render cadastre geometry') }
+  }, [L, geometry])
+
+  // Leaflet CSS imported statically above
+
+  return <div ref={mapRef} style={{ width: '100%', height: '100%' }} />
 }

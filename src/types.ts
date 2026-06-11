@@ -15,6 +15,7 @@ export interface RDZAAPIResponse {
   zonagePLU: string | null
   orthophotoUrl: string | null
   supData: SUPItem[] | null
+  geometry: unknown | null
   note: string | null
   noteReseaux: string | null
   erreur?: string
