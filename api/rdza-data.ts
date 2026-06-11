@@ -13,6 +13,27 @@ const APICARTO_GPU_SUP_S = 'https://apicarto.ign.fr/api/gpu/generateur-sup-s'
 const APICARTO_GPU_SUP_L = 'https://apicarto.ign.fr/api/gpu/generateur-sup-l'
 const APICARTO_GPU_SUP_P = 'https://apicarto.ign.fr/api/gpu/generateur-sup-p'
 const APICARTO_GPU_DOC = 'https://apicarto.ign.fr/api/gpu/doc-urba'
+// ─── Helper : fetch avec timeout ───
+async function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs = 5000): Promise<Response> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    const res = await fetch(url, { ...options, signal: controller.signal })
+    return res
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+async function fetchPostWithTimeout(url: string, body: URLSearchParams, timeoutMs = 5000): Promise<Response> {
+  return fetchWithTimeout(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: body.toString(),
+  }, timeoutMs)
+}
+
+
 
 interface GeocodeResult {
   lon: number
@@ -99,7 +120,7 @@ async function cadastre(lon: number, lat: number): Promise<CadastreResult> {
 async function elevation(lon: number, lat: number): Promise<ElevationResult> {
   try {
     const url = `${GEOPF_ALTI}?lon=${lon}&lat=${lat}&resource=ign_rge_alti_wld&delimiter=|&indent=false`
-    const res = await fetch(url, { headers: { Accept: 'application/json' } })
+    const res = await fetchWithTimeout(url, { headers: { Accept: 'application/json' } })
     if (!res.ok) return { altitude: null }
     const json = await res.json()
     const z = json.elevations?.[0]?.z
@@ -227,7 +248,7 @@ export async function POST(req: Request): Promise<Response> {
       return Response.json({ erreur: 'Adresse requise' }, { status: 400 })
     }
 
-    // Étape 1 : Géocodage
+    // ─── Étape 1 : Géocodage (séquentiel, obligatoire) ───
     let lon: number, lat: number, ville: string, codePostal: string
     try {
       const geo = await geocode(adresse.trim())
@@ -240,30 +261,49 @@ export async function POST(req: Request): Promise<Response> {
       return Response.json({ erreur: msg }, { status: 404 })
     }
 
-    // Étape 2 : Cadastre
-    const cad = await cadastre(lon, lat)
+    // ─── Étape 2 : Appels parallèles (cadastre + altimétrie) ───
+    // Ces 2 appels sont indépendants : ils ne dépendent que des coordonnées
+    const [cad, alt] = await Promise.all([
+      cadastre(lon, lat).catch(() => ({ parcelle: null, surface: null, geometry: null })),
+      elevation(lon, lat).catch(() => ({ altitude: null })),
+    ])
 
-    // Étape 3 : Altimétrie
-    const alt = await elevation(lon, lat)
-
-    // Étape 4 : Urbanisme (PLU)
-    let zonagePLU: string | null = null
-    if (cad.geometry) {
-      zonagePLU = await urbanisme(cad.geometry)
-    }
-
-    // Étape 5 : Orthophoto IGN (WMS)
+    // ─── Étape 3 : Orthophoto (synchrone, pas d'appel réseau) ───
     const orthophotoUrl = buildOrthophotoUrl(lon, lat)
 
-    // Étape 6 : Servitudes d'Utilité Publique (SUP)
+    // ─── Étape 4 : Appels parallèles conditionnés à la géométrie ───
+    // Urbanisme, SUP, et PLU Document nécessitent la géométrie cadastrale
+    let zonagePLU: string | null = null
     let supData: SUPItem[] = []
+    let pluDocUrl: string | null = null
+    let pluDocType: string | null = null
+    let pluDocDate: string | null = null
+
     if (cad.geometry) {
-      supData = await sup(cad.geometry)
+      const [pluZone, supResult, pluDoc] = await Promise.all([
+        urbanisme(cad.geometry).catch(() => null),
+        sup(cad.geometry).catch(() => [] as SUPItem[]),
+        pluDocument(cad.geometry, ville).catch(() => ({ url: null, type: null, dateApprobation: null, commune: ville })),
+      ])
+      zonagePLU = pluZone
+      supData = supResult
+      pluDocUrl = pluDoc.url
+      pluDocType = pluDoc.type
+      pluDocDate = pluDoc.dateApprobation
+    } else {
+      // Fallback PLU Document sans geometrie
+      const pluDoc = await pluDocument(null, ville).catch(() => ({ url: null, type: null, dateApprobation: null, commune: ville }))
+      pluDocUrl = pluDoc.url
+      pluDocType = pluDoc.type
+      pluDocDate = pluDoc.dateApprobation
     }
 
-    // Note : les réseaux enterrés (ERT) ne sont pas accessibles via API publique.
-    // Ils nécessitent le Guichet Unique DT-DICT (reseaux-et-canalisations.ineris.fr)
-    // avec une déclaration réglementaire obligatoire.
+    // ─── Construction de la réponse ───
+    const notes: string[] = []
+    if (alt.altitude == null) notes.push('Données altimétriques non disponibles pour cette zone.')
+    if (cad.parcelle == null) notes.push('Parcelle cadastrale non trouvée.')
+    if (zonagePLU == null && cad.geometry) notes.push('Zonage PLU non disponible.')
+    if (supData.length === 0 && cad.geometry) notes.push('Aucune servitude SUP trouvée.')
 
     return Response.json({
       adresse: adresse.trim(),
@@ -277,8 +317,11 @@ export async function POST(req: Request): Promise<Response> {
       zonagePLU,
       orthophotoUrl,
       supData: supData.length > 0 ? supData : null,
+      pluDocumentUrl: pluDocUrl,
+      pluDocumentType: pluDocType,
+      pluDocumentDate: pluDocDate,
       noteReseaux: 'Les réseaux enterrés (gaz, électricité, eau, télécom) ne sont pas accessibles via API publique. Ils nécessitent une déclaration DT-DICT sur reseaux-et-canalisations.ineris.fr.',
-      note: alt.altitude != null ? null : 'Données altimétriques non disponibles pour cette zone.',
+      note: notes.length > 0 ? notes.join(' ') : null,
     })
   } catch {
     return Response.json({ erreur: 'Erreur serveur lors de la récupération des données.' }, { status: 500 })
