@@ -267,11 +267,24 @@ export function RDZAForm({ project, onChange }: Props) {
               )}
               <button
                 className={`map-control-btn ${drawMode ? 'active' : ''}`}
-                onClick={() => { setDrawMode(!drawMode); if (drawMode) setProfileResult(null)
-    setSketchResult(null) }}
+                onClick={() => {
+                if (!drawMode) { setSketchMode(false); setSketchResult(null) }
+                setDrawMode(!drawMode)
+                if (drawMode) setProfileResult(null)
+              }}
                 style={{ marginTop: '8px', borderTop: '1px solid var(--border-primary)', paddingTop: '8px' }}
               >
                 {drawMode ? '🔴 Stop' : '📐 Profil topo'}
+              </button>
+              <button
+                className={`map-control-btn ${sketchMode ? 'active' : ''}`}
+                onClick={() => {
+                  if (!sketchMode) { setDrawMode(false); setProfileResult(null) }
+                  setSketchMode(!sketchMode)
+                  if (sketchMode) setSketchResult(null)
+                }}
+              >
+                {sketchMode ? '🔴 Stop' : '✏️ Croquis'}
               </button>
             </div>
           </>
