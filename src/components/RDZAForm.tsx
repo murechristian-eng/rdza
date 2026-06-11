@@ -114,11 +114,7 @@ export function RDZAForm({ project, onChange }: Props) {
       }
       const geo = await geoRes.json()
       if (abortRef.current !== controller) return
-      if (geo.erreur) {
-        setFetchStatus('error')
-        setFetchMessage('Adresse introuvable. Vérifiez votre saisie.')
-        return
-      }
+
 
       const { lon, lat, ville, codePostal } = geo
       setGeoInfo({ ville, codePostal, altitude: 0 })
@@ -188,6 +184,8 @@ export function RDZAForm({ project, onChange }: Props) {
             setAutoFilled(newAuto)
           }
         }
+      } else {
+        setFetchMessage('Données cadastrales non disponibles.')
       }
 
       const hasParcelle = !!updates.parcelleCadastrale
