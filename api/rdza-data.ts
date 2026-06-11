@@ -75,7 +75,7 @@ interface SUPItem {
 
 async function geocode(adresse: string): Promise<GeocodeResult> {
   const url = `${GEOPF_GEOCODE}?q=${encodeURIComponent(adresse)}&limit=1`
-  const res = await fetch(url, { headers: { Accept: 'application/json' } })
+  const res = await fetchWithTimeout(url, { headers: { Accept: 'application/json' } }, 8000)
   if (!res.ok) throw new Error('Géocodage échoué')
   const json = await res.json()
   const features = json.features || []
@@ -94,7 +94,7 @@ async function geocode(adresse: string): Promise<GeocodeResult> {
 async function cadastre(lon: number, lat: number): Promise<CadastreResult> {
   try {
     const url = `${APICARTO_CADASTRE}?lon=${lon}&lat=${lat}&distance=50&srid=4326`
-    const res = await fetch(url, { headers: { Accept: 'application/json' } })
+    const res = await fetchWithTimeout(url, { headers: { Accept: 'application/json' } }, 8000)
     if (!res.ok) return { parcelle: null, surface: null, geometry: null }
     const json = await res.json()
     const features = json.features || []
@@ -204,7 +204,7 @@ async function urbanisme(geometry: unknown): Promise<string | null> {
   try {
     const geomStr = geoJsonToWkt(geometry)
     const body = new URLSearchParams({ geom: geomStr })
-    const res = await fetch(APICARTO_URBANISME, {
+    const res = await fetchWithTimeout(APICARTO_URBANISME, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
       body,
@@ -247,7 +247,7 @@ async function sup(geometry: unknown): Promise<SUPItem[]> {
   for (const endpoint of endpoints) {
     try {
       const body = new URLSearchParams({ geom: geomStr })
-      const res = await fetch(endpoint, {
+      const res = await fetchWithTimeout(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
         body,
@@ -280,7 +280,7 @@ async function pluDocument(geometry: unknown, commune: string): Promise<PluDocum
       params.append('geom', geomStr)
     }
     params.append('commune', commune)
-    const res = await fetch(`${APICARTO_GPU_DOC}?${params.toString()}`, {
+    const res = await fetchWithTimeout(`${APICARTO_GPU_DOC}?${params.toString()}`, {
       headers: { Accept: 'application/json' },
     })
     if (!res.ok) return { url: null, type: null, dateApprobation: null, commune }
