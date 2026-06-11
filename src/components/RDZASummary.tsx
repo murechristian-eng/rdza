@@ -174,6 +174,23 @@ export function RDZASummary({ project, onReset }: Props) {
           <Field label="Interprétation" value={project.syntheseArchitecte} />
         </Section>
 
+                      {project.empriseSurface && (
+                <div className="summary-section">
+                  <div className="summary-section-title">
+                    <span className="summary-icon">✏️</span> 2ter. Croquis d'emprise
+                  </div>
+                  <div className="summary-field">
+                    <span className="summary-field-label">Surface emprise au sol</span>
+                    <span className="summary-field-value">{project.empriseSurface} m²</span>
+                  </div>
+                  {project.surfaceTerrain && (
+                    <div className="summary-field">
+                      <span className="summary-field-label">Ratio emprise/sol</span>
+                      <span className="summary-field-value">{((project.empriseSurface / project.surfaceTerrain) * 100).toFixed(1)}%</span>
+                    </div>
+                  )}
+                </div>
+              )}
         <div className="summary-footer">
           <p style={{ fontSize: 'var(--font-size-sm)', color: 'var(--fg-muted)' }}>
             Fiche générée le {new Date().toLocaleDateString('fr-FR')} — Méthode RDZA v2.1
@@ -181,5 +198,6 @@ export function RDZASummary({ project, onReset }: Props) {
         </div>
       </div>
     </div>
+
   )
 }

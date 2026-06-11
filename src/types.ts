@@ -66,6 +66,10 @@ export interface RDZAProject {
   contexteUrbain: string
   stationnementAccess: string
 
+  // Croquis d'emprise (V3.5)
+  empriseSurface?: number
+  empriseGeojson?: unknown
+
   // Synthèse
   syntheseArchitecte: string
 }

@@ -247,9 +247,10 @@ export function RDZAForm({ project, onChange }: Props) {
                 } catch {}
                 setProfileLoading(false)
               }}
-              onSketchComplete={(area: number, ratio: number) => {
+              onSketchComplete={(area: number, ratio: number, geojson: unknown) => {
                 setSketchMode(false)
                 setSketchResult({ area, ratio })
+                onChange({ ...project, empriseSurface: Math.round(area), empriseGeojson: geojson })
               }}
             />
             <div className="map-controls">
@@ -443,7 +444,7 @@ interface LeafletMapProps {
   sketchMode: boolean
   surfaceTerrain: number | null
   onProfileComplete: (lonlats: [number, number][]) => void
-  onSketchComplete: (area: number, ratio: number) => void
+  onSketchComplete: (area: number, ratio: number, geojson: unknown) => void
 }
 
 // ─── Polygon area calculation (shoelace formula + lat→meters conversion) ───
