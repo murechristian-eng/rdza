@@ -127,7 +127,7 @@ export async function POST(req: Request): Promise<Response> {
           params.append('commune', commune)
           const res = await fetchWithTimeout(`${APICARTO_GPU_DOC}?${params.toString()}`, {
             headers: { Accept: 'application/json' },
-          }, 3000)
+          }, 5000)
           if (!res.ok) return { url: null, type: null, dateApprobation: null }
           const json = await res.json()
           const features = json.features || json || []
