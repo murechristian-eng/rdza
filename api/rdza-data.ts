@@ -75,7 +75,7 @@ interface SUPItem {
 
 async function geocode(adresse: string): Promise<GeocodeResult> {
   const url = `${GEOPF_GEOCODE}?q=${encodeURIComponent(adresse)}&limit=1`
-  const res = await fetchWithTimeout(url, { headers: { Accept: 'application/json' } }, 3000)
+  const res = await fetchWithTimeout(url, { headers: { Accept: 'application/json' } }, 3000)))
   if (!res.ok) throw new Error('Géocodage échoué')
   const json = await res.json()
   const features = json.features || []
@@ -94,7 +94,7 @@ async function geocode(adresse: string): Promise<GeocodeResult> {
 async function cadastre(lon: number, lat: number): Promise<CadastreResult> {
   try {
     const url = `${APICARTO_CADASTRE}?lon=${lon}&lat=${lat}&distance=50&srid=4326`
-    const res = await fetchWithTimeout(url, { headers: { Accept: 'application/json' } }, 3000)
+    const res = await fetchWithTimeout(url, { headers: { Accept: 'application/json' } }, 5000))
     if (!res.ok) return { parcelle: null, surface: null, geometry: null }
     const json = await res.json()
     const features = json.features || []
