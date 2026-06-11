@@ -1,7 +1,7 @@
 // Vercel Serverless Function — Proxy vers Google Gemini API
 // RDZA : Assistant d'analyse architecturale et pré-faisabilité
 
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY || process.env.Gemini || ''
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY || process.env.Gemini || process.env.gemini || ''
 const GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent'
 
 export async function POST(req: Request): Promise<Response> {
