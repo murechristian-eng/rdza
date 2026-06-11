@@ -26,13 +26,6 @@ async function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutM
   }
 }
 
-async function fetchPostWithTimeout(url: string, body: URLSearchParams, timeoutMs = 5000): Promise<Response> {
-  return fetchWithTimeout(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: body.toString(),
-  }, timeoutMs)
-}
 
 
 
