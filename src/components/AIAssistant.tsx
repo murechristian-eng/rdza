@@ -1,27 +1,24 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useMemo, useCallback } from 'react'
 import type { RDZAProject, ChatMessage } from '../types'
 import { INTENTION_LABELS, ZONAGE_LABELS, TOPOGRAPHIE_LABELS } from '../types'
+import { mockArchitecturalResponse } from './ai-mock'
 
 interface Props {
   project: RDZAProject
 }
 
-// ─── SYSTEM PROMPT V3 : Transparence radicale ───
-const SYSTEM_PROMPT = `Tu es RDZA, co-pilote architectural expert en pré-faisabilité. Tu travailles AVEC l'architecte, pas à sa place.
+// ─── SYSTEM PROMPT V3 — concis et efficace ───
+const SYSTEM_PROMPT = `Tu es RDZA, co-pilote architectural expert en pré-faisabilité. Tu travailles AVEC l'architecte.
 
-RÈGLES IMPÉRATIVES :
-1. Structure TOUJOURS ta réponse en 3 blocs :
-   [INTERPRÉTATION] — ton analyse concise du sujet
-   [SOURCE] — la référence exacte qui fonde ton avis (article du Code de l'urbanisme, règle PLU, donnée IGN, principe architectural établi). Si tu n'as pas de source précise, écris "[SOURCE] ⚠️ Avis indicatif — à vérifier avec le service urbanisme."
-   [CONFIANCE] — un niveau de confiance parmi : 🟢 Élevée (>80%) | 🟡 Modérée (50-80%) (précise pourquoi) | 🔴 Faible (<50%) (précise pourquoi)
+STRUCTURE OBLIGATOIRE :
+[INTERPRÉTATION] — analyse concise
+[SOURCE] — référence précise (article du Code de l'urbanisme, règle PLU, donnée IGN). Si incertain : "[SOURCE] ⚠️ Avis indicatif — à vérifier avec le service urbanisme."
+[CONFIANCE] — 🟢 Élevée (>80%) | 🟡 Modérée (50-80%) | 🔴 Faible (<50%)
 
-2. Ne JAMAIS inventer un article du PLU. Si tu ne connais pas le règlement exact de la commune, dis-le clairement et oriente vers le Géoportail de l'Urbanisme.
-
-3. Cite les données du projet quand elles sont disponibles (surface, zonage, altitude, etc.).
-
-4. Sois concis, technique, actionnable. Réponds en français.
-
-Tu es un expert en : zonage PLU, droit à construire, potentiel opérationnel, insertion urbaine, contraintes techniques, risques, et stratégie de projet.`
+RÈGLES :
+• Ne JAMAIS inventer un article du PLU. Oriente vers le Géoportail de l'Urbanisme si besoin.
+• Cite les données du projet (surface, zonage, altitude, etc.).
+• Sois concis, technique, actionnable. Réponds en français.`
 
 // ─── Parsing de la réponse structurée ───
 interface ParsedResponse {
@@ -52,21 +49,21 @@ function parseStructuredResponse(text: string): ParsedResponse | null {
 }
 
 export function AIAssistant({ project }: Props) {
-  const pluInfo = project.pluDocumentUrl 
-    ? `
-• Document PLU : ${project.pluDocumentType || 'PLU'} (${project.pluDocumentUrl})`
-    : ''
-
-  const projectContext = `Projet RDZA en cours :
-• Adresse : ${project.adresseSite || 'Non renseignée'}
-• Intention : ${INTENTION_LABELS[project.intentionProjet]}
-• Parcelle : ${project.parcelleCadastrale || 'Non renseignée'}
-• Surface : ${project.surfaceTerrain ? project.surfaceTerrain + ' m²' : 'Non renseignée'}
-• Zonage PLU : ${ZONAGE_LABELS[project.zonagePLU]}
-• Topographie : ${TOPOGRAPHIE_LABELS[project.topographiePente]}
-• Contexte urbain : ${project.contexteUrbain || '—'}
-• Stationnement : ${project.stationnementAccess || '—'}
-• Synthèse : ${project.syntheseArchitecte || '—'}`
+  const projectContext = useMemo(() => {
+    const lines = [
+      `Projet RDZA en cours :`,
+      `• Adresse : ${project.adresseSite || 'Non renseignée'}`,
+      `• Intention : ${INTENTION_LABELS[project.intentionProjet]}`,
+      `• Parcelle : ${project.parcelleCadastrale || 'Non renseignée'}`,
+      `• Surface : ${project.surfaceTerrain ? project.surfaceTerrain + ' m²' : 'Non renseignée'}`,
+      `• Zonage PLU : ${ZONAGE_LABELS[project.zonagePLU]}`,
+      `• Topographie : ${TOPOGRAPHIE_LABELS[project.topographiePente]}`,
+    ]
+    if (project.contexteUrbain) lines.push(`• Contexte urbain : ${project.contexteUrbain}`)
+    if (project.stationnementAccess) lines.push(`• Stationnement : ${project.stationnementAccess}`)
+    if (project.pluDocumentUrl) lines.push(`• Document PLU : ${project.pluDocumentType || 'PLU'} (${project.pluDocumentUrl})`)
+    return lines.join('\n')
+  }, [project.adresseSite, project.intentionProjet, project.parcelleCadastrale, project.surfaceTerrain, project.zonagePLU, project.topographiePente, project.contexteUrbain, project.stationnementAccess, project.pluDocumentUrl, project.pluDocumentType])
 
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
@@ -95,35 +92,35 @@ Je peux vous aider à :
     containerRef.current?.scrollTo({ top: containerRef.current.scrollHeight, behavior: 'smooth' })
   }, [messages])
 
-  const callAI = async (prompt: string): Promise<string> => {
+  const callAI = useCallback(async (msgs: ChatMessage[]): Promise<string> => {
     try {
       const res = await fetch('/api/ai', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          prompt,
+          messages: msgs,
           system: SYSTEM_PROMPT,
           context: projectContext,
-          pluContext: pluInfo.trim() || undefined,
-          pluDocumentUrl: project.pluDocumentUrl || undefined,
         }),
       })
       if (!res.ok) throw new Error(`API error: ${res.status}`)
       const data = await res.json()
       return data.text || "Désolé, je n'ai pas pu générer de réponse."
     } catch {
-      return mockArchitecturalResponse(prompt, project)
+      const lastUserMsg = [...msgs].reverse().find(m => m.role === 'user')
+      return mockArchitecturalResponse(lastUserMsg?.content || 'question générale', project)
     }
-  }
+  }, [projectContext, project])
 
   const sendMessage = async () => {
     const text = input.trim()
     if (!text || loading) return
     setInput('')
     const userMsg: ChatMessage = { role: 'user', content: text, timestamp: Date.now() }
-    setMessages(prev => [...prev, userMsg])
+    const newMessages = [...messages, userMsg]
+    setMessages(newMessages)
     setLoading(true)
-    const reply = await callAI(text)
+    const reply = await callAI(newMessages)
     const assistantMsg: ChatMessage = { role: 'assistant', content: reply, timestamp: Date.now() }
     setMessages(prev => [...prev, assistantMsg])
     setLoading(false)
@@ -132,7 +129,7 @@ Je peux vous aider à :
 
   const hasAdresse = project.adresseSite.trim().length > 0
 
-  const quickActions = [
+  const quickActions = useMemo(() => [
     {
       label: '📐 Analyser le zonage',
       prompt: `Analyse le zonage PLU de ce projet : ${ZONAGE_LABELS[project.zonagePLU]}. Surface : ${project.surfaceTerrain ? project.surfaceTerrain + 'm²' : 'non renseignée'}. Cite les articles types du code de l'urbanisme applicables. Format requis : [INTERPRÉTATION] + [SOURCE] + [CONFIANCE].`,
@@ -148,7 +145,7 @@ Je peux vous aider à :
       prompt: `Rédige une synthèse architecte RDZA pour ce projet : ${project.adresseSite || '?'}, ${project.surfaceTerrain ? project.surfaceTerrain + 'm²' : ''}, zonage ${ZONAGE_LABELS[project.zonagePLU]}. Structure ta réponse en [INTERPRÉTATION] + [SOURCE] + [CONFIANCE].`,
       disabled: !hasAdresse,
     },
-  ]
+  ], [project.zonagePLU, project.surfaceTerrain, project.topographiePente, project.intentionProjet, project.adresseSite, hasAdresse])
 
   const confidenceBadge = (level: 'high' | 'medium' | 'low') => {
     const config = {
@@ -247,126 +244,3 @@ Je peux vous aider à :
   )
 }
 
-
-// ─── Mock architectural responses V3 — Format structuré ───
-function mockArchitecturalResponse(prompt: string, project: RDZAProject): string {
-  const lower = prompt.toLowerCase()
-  const z = project.zonagePLU
-  const surf = project.surfaceTerrain
-  const zLabel = ZONAGE_LABELS[z]
-  const addr = project.adresseSite || 'Site'
-
-  if (lower.includes('zonage') || lower.includes('plu')) {
-    let analyse = ''
-    let source = ''
-    if (z === 'U') {
-      analyse = 'Zone urbaine — droits à construire généralement favorables. Vérifier le règlement de zone pour les hauteurs maximales (articles R.111-17 et suivants du Code de l\'urbanisme), les prospects, et le COS/emprise au sol.'
-      source = 'Code de l\'urbanisme — articles R.111-1 à R.111-53 (règles générales d\'urbanisme). ⚠️ Le règlement spécifique de la commune doit être consulté sur le Géoportail de l\'Urbanisme (geoportail-urbanisme.gouv.fr).'
-    } else if (z === 'UH') {
-      analyse = 'Zone urbaine à dominante habitat — constructibilité favorable pour du logement. Vérifier les hauteurs (souvent R+2 à R+4 en UH), les retraits par rapport aux limites séparatives, et les obligations de stationnement.'
-      source = 'Code de l\'urbanisme — articles R.111-17 (hauteur) et R.111-19 (prospects). ⚠️ Consulter le règlement de zone UH du PLU communal sur le Géoportail de l\'Urbanisme.'
-    } else if (z === 'AU') {
-      analyse = 'Zone à urbaniser — soumise à procédure (modification/révision PLU ou projet urbain partenarial). Vérifier si la zone est ouverte à l\'urbanisation (AU « ouverte » ou « fermée »). Les droits à construire dépendent de l\'OAP (Orientation d\'Aménagement et de Programmation).'
-      source = 'Code de l\'urbanisme — articles L.151-1 et suivants (PLU) et L.151-6 (OAP). ⚠️ Vérifier le statut exact de la zone AU auprès du service urbanisme communal.'
-    } else if (z === 'A') {
-      analyse = 'Zone agricole — constructibilité très limitée, réservée aux exploitations agricoles et aux STECAL (Secteurs de Taille Et de Capacité d\'Accueil Limitées).'
-      source = 'Code de l\'urbanisme — article L.151-11 (zone A) et L.151-13 (STECAL). ⚠️ Toute construction non agricole nécessite une dérogation ou une modification du PLU.'
-    } else if (z === 'N') {
-      analyse = 'Zone naturelle — constructibilité quasi nulle, sauf exceptions listées au règlement (équipements publics, aménagements légers).'
-      source = 'Code de l\'urbanisme — article L.151-12 (zone N). ⚠️ Toute construction est soumise à une justification stricte de son intégration environnementale.'
-    } else {
-      analyse = 'Vérifier le règlement de zone pour les contraintes spécifiques. Consulter le PLU communal pour les règles de hauteur, prospect, emprise au sol et stationnement.'
-      source = '⚠️ Avis indicatif — consulter le service urbanisme de la commune et le Géoportail de l\'Urbanisme pour le règlement exact.'
-    }
-
-    return `[INTERPRÉTATION]
-${analyse}
-
-Points de vigilance complémentaires :
-• Vérifier les servitudes d\'utilité publique (SUP) applicables
-• Consulter le règlement écrit ET graphique du PLU
-• Vérifier si une OAP s\'applique sur le secteur
-• Contrôler les risques naturels (PPRI, cavités) sur Géorisques (georisques.gouv.fr)
-
-[SOURCE]
-${source}
-
-[CONFIANCE]
-🟡 Modérée (50-80%) — L\'analyse s\'appuie sur les principes généraux du Code de l\'urbanisme (${zLabel}). Le règlement spécifique du PLU communal peut contenir des dispositions particulières. Consulter le document d\'urbanisme officiel pour confirmer.`
-  }
-
-  if (lower.includes('potentiel') || lower.includes('opérationnel')) {
-    let analyseSurf = 'Surface non renseignée.'
-    if (surf && surf > 2000) analyseSurf = 'Grande emprise (>2000 m²) — potentiel de découpage parcellaire ou opération d\'ensemble. Permet des programmes mixtes ou plusieurs bâtiments.'
-    else if (surf && surf > 500) analyseSurf = 'Emprise moyenne (500-2000 m²) — projet possible avec optimisation de l\'implantation. Vérifier les prospects pour maximiser la constructibilité.'
-    else if (surf) analyseSurf = 'Petite emprise (<500 m²) — vérifier les prospects minimums et les hauteurs autorisées. Optimiser l\'implantation au plus près des limites autorisées.'
-
-    return `[INTERPRÉTATION]
-${analyseSurf}
-
-Croisement réglementaire :
-• Intention : ${INTENTION_LABELS[project.intentionProjet]}
-• Zonage : ${zLabel}
-• Topographie : ${TOPOGRAPHIE_LABELS[project.topographiePente]}
-• Surface : ${surf ? surf + ' m²' : 'Non renseignée'}
-
-Compatibilité intention × zonage : ${z === 'U' || z === 'UH' || z === 'UC' ? '✅ Favorable — le zonage urbain permet ce type de programme.' : z === 'AU' ? '🟡 Conditionnelle — vérifier l\'ouverture à l\'urbanisation.' : '🔴 Défavorable — le zonage limite fortement ce type de programme.'}
-
-Points de blocage potentiels :
-• Servitudes d\'utilité publique (réseaux, monuments historiques, etc.)
-• Risques naturels (inondation, retrait-gonflement des argiles, cavités)
-• Prescriptions architecturales ou patrimoniales (ABF, site inscrit/classé)
-• ${project.topographiePente === 'fort' ? '🔴 Pente forte : étude géotechnique recommandée, surcoût fondations.' : '🟢 Topographie compatible.'}
-
-[SOURCE]
-Code de l\'urbanisme — articles L.151-1 et suivants (PLU/Zonage). Guide de la constructibilité — Ministère de la Transition Écologique. ⚠️ Analyse indicative — le règlement communal prime.
-
-[CONFIANCE]
-🟡 Modérée (50-80%) — L\'analyse croise les données disponibles (surface, zonage, topographie) mais le potentiel réel dépend du règlement de zone spécifique et des servitudes locales.`
-  }
-
-  if (lower.includes('synthèse') || lower.includes('rédiger')) {
-    return `[INTERPRÉTATION]
-Projet de synthèse architecte RDZA pour le site ${addr}.
-
-Programme : ${INTENTION_LABELS[project.intentionProjet]}
-Surface terrain : ${surf ? surf + ' m²' : 'À renseigner'}
-Zonage : ${zLabel}
-Topographie : ${TOPOGRAPHIE_LABELS[project.topographiePente]}
-
-Cohérence urbaine : ${project.contexteUrbain
-  ? 'Le projet s\'inscrit dans un contexte ' + project.contexteUrbain.slice(0, 120) + '...'
-  : 'À évaluer sur site (relevé du bâti environnant, hauteurs, gabarits, matériaux).'}
-
-Potentiel : ${z === 'U' || z === 'UH' || z === 'UC'
-  ? '✅ Favorable — zone urbaine constructible. Vérifier les règles de hauteur et prospects pour optimiser l\'emprise.'
-  : '🟡 À vérifier selon les contraintes de zonage et le règlement communal.'}
-
-Stratégie proposée :
-1. Consulter le règlement écrit et graphique du PLU
-2. Réaliser un relevé topographique précis si pente > 5%
-3. Vérifier les servitudes (SUP) et réseaux (DT-DICT obligatoire)
-4. Étudier l\'insertion dans le gabarit urbain environnant
-
-[SOURCE]
-Méthode RDZA — Analyse architecturale standardisée. ⚠️ La synthèse définitive nécessite une visite de site et la consultation des documents d\'urbanisme officiels.
-
-[CONFIANCE]
-🟡 Modérée (50-80%) — Synthèse basée sur les données disponibles. La visite de site et la consultation du PLU communal sont indispensables pour finaliser l\'analyse.`
-  }
-
-  return `[INTERPRÉTATION]
-Je suis RDZA, votre co-pilote architectural. Pour le site « ${addr} », je suis prêt à vous assister sur :
-• L\'analyse du zonage PLU et des droits à construire
-• L\'évaluation du potentiel opérationnel
-• La rédaction d\'une synthèse architecte structurée
-• L\'identification des risques et points de vigilance
-
-Remplissez d\'abord les champs dans l\'onglet Étude, puis utilisez les boutons d\'action rapide ou posez-moi une question.
-
-[SOURCE]
-Méthode RDZA — outil d\'analyse architecturale et de pré-faisabilité.
-
-[CONFIANCE]
-🟢 Élevée (>80%) — Assistance générale sans analyse réglementaire spécifique.`
-}
