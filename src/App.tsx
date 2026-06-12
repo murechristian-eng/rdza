@@ -66,6 +66,10 @@ export default function App() {
         <span>{project.adresseSite || 'Aucune adresse saisie'}</span>
         <span className="footer-sep">·</span>
         <span>{new Date().getFullYear()}</span>
+        <span className="footer-sep">·</span>
+        <a href="https://github.com/murechristian-eng/rdza/discussions" target="_blank" rel="noopener noreferrer" className="btn btn-ghost btn-sm" style={{ fontSize: 'inherit', padding: 0 }}>
+          💡 Suggestion
+        </a>
       </footer>
     </div>
   )
