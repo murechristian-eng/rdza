@@ -41,10 +41,19 @@ export async function POST(req: Request): Promise<Response> {
     })
 
     if (!geminiRes.ok) {
-      return Response.json({
-        text: `⚠️ L'API Gemini a retourné une erreur (${geminiRes.status}). L'assistant fonctionne en mode dégradé.`,
-        mock: true,
-      })
+      const isQuota = geminiRes.status === 429
+      const msg = isQuota
+        ? `⚠️ **Quota Gemini épuisé** (erreur 429). Le plan gratuit Google AI a atteint sa limite.
+
+L'assistant fonctionne en **mode dégradé** avec des réponses pré-formatées.
+
+👉 Pour restaurer l'accès :
+1. Va sur https://aistudio.google.com/apikey
+2. Crée une nouvelle clé API
+3. Ajoute-la dans les variables d'environnement Vercel sous le nom \`GEMINI_API_KEY\``
+        : `⚠️ L'API Gemini a retourné une erreur (${geminiRes.status}). L'assistant fonctionne en mode dégradé.`
+
+      return Response.json({ text: msg, mock: true })
     }
 
     const data = await geminiRes.json()

@@ -1,18 +1,10 @@
 // Vercel Serverless Function — Cadastre + Altimétrie
 // Prend lon/lat, retourne parcelle + altitude. ~3-4s max.
 
+import { fetchWithTimeout } from './_utils'
+
 const APICARTO_CADASTRE = 'https://apicarto.ign.fr/api/cadastre/parcelle'
 const GEOPF_ALTI = 'https://data.geopf.fr/altimetrie/1.0/calcul/alti/rest/elevation.json'
-
-async function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs = 5000): Promise<Response> {
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), timeoutMs)
-  try {
-    return await fetch(url, { ...options, signal: controller.signal })
-  } finally {
-    clearTimeout(timer)
-  }
-}
 
 export async function POST(req: Request): Promise<Response> {
   try {
